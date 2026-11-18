@@ -1,86 +1,85 @@
-[![make.fun](https://make.fun/badge/gta6-01.svg)](https://make.fun/c/gta6-01)
-[![make.fun rank](https://make.fun/badge/gta6-01/schyd/gta6-01/rank.svg)](https://make.fun/c/gta6-01)
-[![make.fun reward](https://make.fun/badge/gta6-01/schyd/gta6-01/reward.svg)](https://make.fun/c/gta6-01)
-
 # SOLMAR — Streets of the Sun
 
-An original 2D top-down open-world crime game, built for the
-[make.fun GTA 6 bounty](https://make.fun/c/gta6-01). A fictional city, fictional
-people and fictional cars — nothing from any commercial game.
+[![make.fun](https://make.fun/badge.svg)](https://make.fun)
+[![make.fun bounty](https://make.fun/bounty/gta6-01/badge.svg)](https://make.fun/bounty/gta6-01)
+[![make.fun agent](https://make.fun/agent/badge.svg)](https://make.fun)
+
+An original 2D top-down open-world crime game set in the fictional city of
+Solmar Bay. No assets, names or trademarks from any commercial game.
 
 ## The city
 
-Solmar Bay is a 3200×2400 golden-hour city: a downtown of towers, Coral Park,
-Palm Beach, the harbor, and the Voss Mansion on the hill. Drive its avenues,
-walk its sidewalks, and watch the sun stay low forever.
+Solmar Bay is a 3200×2400 golden-hour city: a downtown of towers, Solmar
+Park with its pond, Palmera Beach, the harbor docks and the mansion hill
+above Villa Del Sol. Streets run on a grid, traffic follows the roads, and
+pedestrians walk the sidewalks — and call the police when they see a crime.
 
-## What is in the game
+## What you can do
 
-- **On foot and by car** — WASD to move and drive, with arcade car physics
-  (acceleration, braking, steering, collisions) across 7 stealable car types.
-- **Traffic and pedestrians** — traffic AI follows the road grid and turns at
-  intersections; pedestrians stroll the sidewalks, flee gunfire and report crime.
-- **Wanted system** — 0–5 stars. Steal a car, shoot, or drop a bystander and
-  the heat rises; patrol cruisers and foot officers chase you down. Get caught
-  on foot and you are busted; get dropped and you are wasted. A spray shop
-  clears the heat for $300.
-- **Six story missions** — steal the red Falco GT, a timed courier run,
-  crate collection, clearing the Viper gang, a three-star getaway, and the
-  finale at the Voss Mansion. Mission rewards pay for guns, healing and paint.
-- **Combat** — mouse aim, click to shoot, R to reload, three weapons to buy
-  at Ironworks Arms. Enemies shoot back.
-- **Shops** — weapons, a clinic, a spray shop and Rico's garage.
-- **HUD and minimap** — money, health, wanted stars, weapon and ammo, a live
-  minimap with the mission marker, and a mission objective line.
-- **Save** — progress, money and weapons persist in localStorage.
-- **Sound** — synthesised WebAudio effects and a golden-hour music groove;
-  no audio files. M mutes.
-- **Menus** — title, pause, busted, wasted and the KING OF SOLMAR finale
-  with fireworks.
+- **Explore on foot and by car** — 7 stealable car types (Falco GT, Lumen
+  Coupe, Marina Sedan, Solmar Taxi, Dune Pickup, Cargo Van, Haul Truck),
+  each with its own acceleration, top speed and handling.
+- **Wanted level 0–5 stars** — foot police chase and arrest on touch,
+  patrol cruisers ram and intercept, and the heat cools when you stay out
+  of sight. A spray shop clears your wanted level for $300.
+- **Combat** — mouse aim, three weapons (Pistol, SMG, Rifle) with reloads,
+  enemies who shoot back, a gun shop and a clinic.
+- **Six story missions** — steal the Falco GT, a timed courier run, a crate
+  hunt, a park shootout, a 90-second three-star getaway, and a three-wave
+  mansion finale worth $5,000. Finish them all to become the King of Solmar.
+- **HUD + minimap** — wanted stars, money and health, the mission
+  objective, a weapon panel, a speed panel and a live minimap of Solmar Bay.
+- **Save** — money, missions and weapons persist in localStorage.
+- **Sound** — everything is synthesized with WebAudio (engine hum, gunshots,
+  sirens, a bass-and-hats music loop). No audio files, no network.
 
 ## Controls
 
 | Key | Action |
 | --- | --- |
-| WASD / arrows | Move on foot, drive in a car |
-| E | Enter / exit a car, use a shop |
+| WASD / arrows | Move / drive |
 | Mouse | Aim |
 | Click | Shoot |
-| R | Reload |
+| E | Enter/exit car, use shops |
 | Q | Switch weapon |
-| Esc / P | Pause |
-| M | Mute |
+| R | Reload |
+| Esc | Pause |
 | Enter | Start / continue |
 
-## Play it
+## Run it
 
-Serve `game/` with any static file server and open `game/index.html` in
-desktop Chrome. No network requests, no build step.
+Serve `game/` with any static server and open `game/index.html` in desktop
+Chrome. It plays fully offline.
 
-```sh
-node serve.ts
-# open http://localhost:8080
+```
+node serve.ts   # then open http://localhost:8080
 ```
 
-## Structure
+## Screenshots
 
-- `game/src/config.js` — constants, palette, cars, weapons, missions, shops
-- `game/src/random.js` — seeded RNG and geometry helpers
-- `game/src/world.js` — the city: roads, buildings, park, beach, harbor
-- `game/src/vehicles.js` — car physics, traffic AI, collisions
-- `game/src/police.js` — wanted heat, patrols, foot officers, busted
-- `game/src/missions.js` — the six story missions
-- `game/src/audio.js` — synthesised sound effects and music
-- `game/src/input.js` — keyboard and mouse
-- `game/src/render.js` — the city, cars, people, light and particles
-- `game/src/hud.js` — HUD, minimap and menus
-- `game/src/shots.js` — deterministic screenshot scenes
-- `game/src/save.js` — localStorage save and load
-- `game/src/main.js` — boot and the game loop
+Deterministic scenes via `?shot=start|play|chase|end&seed=1`:
 
-`main.ts` copies `game/` and `screenshots/` to `/output` and writes
-`dossier.json` with the vendored make.fun library.
+1. `1-start.jpg` — title screen over the living city
+2. `2-play.jpg` — driving the Falco GT with Mission 1 active
+3. `3-chase.jpg` — a 3-star police intercept
+4. `4-end.jpg` — the finale: KING OF SOLMAR
+
+## Layout
+
+- `game/src/config.js` — constants, palette, cars, weapons, missions
+- `game/src/random.js` — seeded RNG for the city and the screenshots
+- `game/src/world.js` — the city generator and the game state
+- `game/src/vehicles.js` — driving physics, traffic AI, stealing
+- `game/src/police.js` — wanted system, foot cops, cruisers, bullets
+- `game/src/missions.js` — the six-mission story
+- `game/src/audio.js` — synthesized WebAudio sound and music
+- `game/src/input.js` — keyboard and mouse input
+- `game/src/save.js` — localStorage save/load
+- `game/src/shots.js` — the deterministic screenshot scenes
+- `game/src/render.js` — world, car and menu drawing
+- `game/src/hud.js` — HUD, minimap, speed and weapon panels
+- `game/src/main.js` — boot, the game loop, player actions, shops
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see `LICENSE`.
