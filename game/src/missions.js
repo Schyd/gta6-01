@@ -1,184 +1,205 @@
-// The story: six sequential missions for Rico's crew, from stealing the Falco GT
-// to the finale at the Voss Mansion. Each mission owns its setup and its win check.
-import { COURIER_POINTS, CRATE_SPOTS, GARAGE, HIDEOUT, MANSION, MISSION_DEFS, PARK_CENTER } from './config.js';
-import { dist, range } from './random.js';
-import { makeCar } from './vehicles.js';
+// missions.js — the six-mission story of SOLMAR. Each mission is a small
+// state machine with an objective marker, a timer or a counter, and a cash
+// reward. Completing one starts the next; finishing the sixth triggers the
+// finale screen.
 
-export function makeEnemy(x, y, opts = {}) {
-  return {
-    x, y,
-    angle: range(Math.random, 0, Math.PI * 2),
-    hp: opts.hp || 60,
-    speed: opts.speed || 150,
-    shootCd: range(Math.random, 0.5, 1.5),
-    gang: !!opts.gang,
-    wander: { x, y },
-    wanderT: 0,
-  };
-}
+import { MISSION_DEFS, POIS, DISTRICTS, clamp, dist2 } from './config.js';
+import { toast, burst, addPed, addCar } from './world.js';
+import { raiseWanted } from './vehicles.js';
 
-function spawnGang(g, count, cx, cy, radius) {
-  for (let i = 0; i < count; i += 1) {
-    const a = g.random() * Math.PI * 2;
-    const r = g.random() * radius;
-    g.enemies.push(makeEnemy(cx + Math.cos(a) * r, cy + Math.sin(a) * r, { gang: true, hp: 70 }));
-  }
-}
-
-export function startMission(g, index) {
-  const def = MISSION_DEFS[index];
+// Start mission number n (1-based). Sets up its markers, crates or enemies.
+export function startMission(G, n) {
+  const def = MISSION_DEFS[n - 1];
   if (!def) return;
-  g.mission = {
-    index,
-    def,
-    stage: 'go',
-    timer: 0,
-    collected: 0,
-    killed: 0,
-    wave: 0,
-    checkpoint: 0,
-    targetCar: null,
-  };
-  if (index === 0) {
-    // The red Falco GT waits downtown, on the avenue by the arms shop.
-    const falco = makeCar('falco', 1800, 820, 0, { color: '#c22a2a' });
-    g.cars.push(falco);
-    g.mission.targetCar = falco;
-    g.mission.stage = 'steal';
-  } else if (index === 1) {
-    g.mission.timer = 75;
-  } else if (index === 2) {
-    g.crates = CRATE_SPOTS.map((s) => ({ ...s, taken: false }));
-  } else if (index === 3) {
-    spawnGang(g, 8, PARK_CENTER.x, PARK_CENTER.y, 160);
-  } else if (index === 4) {
-    g.heat = 65; // three stars, locked in by the timer below
-    g.wanted = 3;
-    if (g.audio) g.audio.setSiren(true);
-    g.mission.timer = 90;
-    g.mission.stage = 'survive';
-  } else if (index === 5) {
-    g.mission.wave = 1;
-    spawnGang(g, 4, MANSION.x, MANSION.y, 120);
+  G.missionIndex = n;
+  G.missionTimer = 0;
+  G.mission = { id: n, name: def.name, brief: def.brief, reward: def.reward, stage: 0, progress: 0, target: 0, marker: null, done: false };
+  if (n === 1) {
+    G.mission.marker = { x: POIS.falcoSpot.x, y: POIS.falcoSpot.y, label: 'Falco GT' };
+    toast(G, `Mission 1 — ${def.name}: steal the red Falco GT downtown.`, 5);
+  } else if (n === 2) {
+    G.missionTimer = 95;
+    G.mission.marker = { x: POIS.courierDrop.x, y: POIS.courierDrop.y, label: 'Harbor Drop' };
+    toast(G, `Mission 2 — ${def.name}: 95 seconds to the harbor!`, 5);
+  } else if (n === 3) {
+    G.crates = crateSpots(G);
+    G.mission.target = 6;
+    G.mission.marker = { x: G.crates[0].x, y: G.crates[0].y, label: 'Crate' };
+    toast(G, `Mission 3 — ${def.name}: collect 6 crates.`, 5);
+  } else if (n === 4) {
+    spawnVipers(G, DISTRICTS.park, 8);
+    G.mission.target = 8;
+    G.stats.killsAtMissionStart = G.stats.kills;
+    G.mission.marker = { x: DISTRICTS.park.x + DISTRICTS.park.w / 2, y: DISTRICTS.park.y + DISTRICTS.park.h / 2, label: 'Vipers' };
+    toast(G, `Mission 4 — ${def.name}: 8 Vipers in the park.`, 5);
+  } else if (n === 5) {
+    raiseWanted(G, 3);
+    G.missionTimer = 90;
+    toast(G, `Mission 5 — ${def.name}: survive 90 seconds at 3 stars!`, 5);
+  } else if (n === 6) {
+    G.mission.wave = 0;
+    G.mission.target = 3;
+    spawnViperWave(G, 1);
+    G.mission.marker = { x: POIS.mansion.x, y: POIS.mansion.y, label: 'Villa Del Sol' };
+    toast(G, `Mission 6 — ${def.name}: storm the mansion. Wave 1 of 3.`, 5);
   }
-  g.toast(`Mission ${def.id}: ${def.title}`, '#ffd98a');
-  g.toast(def.brief, '#e8e8e8');
-  if (g.audio) g.audio.mission();
 }
 
-export function missionMarker(g) {
-  const m = g.mission;
-  if (!m) return null;
-  if (m.index === 0) {
-    if (m.stage === 'steal' && m.targetCar) return { x: m.targetCar.x, y: m.targetCar.y, label: 'Falco GT' };
-    return { x: GARAGE.x, y: GARAGE.y, label: 'Rico Garage' };
+// Six crate spots around the park and downtown.
+function crateSpots(G) {
+  return [
+    { x: 1150, y: 950, taken: false },
+    { x: 1450, y: 1150, taken: false },
+    { x: 1300, y: 850, taken: false },
+    { x: 1750, y: 600, taken: false },
+    { x: 2100, y: 450, taken: false },
+    { x: 1550, y: 950, taken: false },
+  ];
+}
+
+// Spawn count Vipers inside a district rectangle.
+export function spawnVipers(G, rect, count) {
+  for (let i = 0; i < count; i += 1) {
+    G.enemies.push({
+      x: rect.x + 40 + G.rng() * (rect.w - 80),
+      y: rect.y + 40 + G.rng() * (rect.h - 80),
+      hp: 70, angle: 0, shootTimer: 1 + G.rng() * 2, speed: 120 + G.rng() * 40,
+      wave: 0,
+    });
   }
-  if (m.index === 1) {
-    const p = COURIER_POINTS[m.checkpoint];
-    return p ? { x: p.x, y: p.y, label: `Drop ${m.checkpoint + 1}/3` } : null;
+}
+
+// One finale wave at the mansion: 4 + wave Vipers around the villa.
+export function spawnViperWave(G, wave) {
+  const count = 3 + wave;
+  for (let i = 0; i < count; i += 1) {
+    const a = (i / count) * Math.PI * 2;
+    G.enemies.push({
+      x: POIS.mansion.x + Math.cos(a) * (120 + G.rng() * 80),
+      y: POIS.mansion.y + Math.sin(a) * (120 + G.rng() * 80),
+      hp: 80, angle: 0, shootTimer: 1 + G.rng(), speed: 130 + G.rng() * 40,
+      wave,
+    });
   }
-  if (m.index === 2) {
-    const next = g.crates.find((c) => !c.taken);
-    return next ? { x: next.x, y: next.y, label: `Crates ${m.collected}/6` } : null;
-  }
-  if (m.index === 3) {
-    return g.enemies.length ? { x: g.enemies[0].x, y: g.enemies[0].y, label: `Vipers left: ${g.enemies.length}` } : null;
-  }
-  if (m.index === 4) {
-    if (m.stage === 'survive') return null;
-    return { x: HIDEOUT.x, y: HIDEOUT.y, label: 'Hideout' };
-  }
-  if (m.index === 5) {
-    return g.enemies.length ? { x: g.enemies[0].x, y: g.enemies[0].y, label: `Wave ${m.wave}/3 — ${g.enemies.length} left` } : { x: MANSION.x, y: MANSION.y, label: 'Voss Mansion' };
+}
+
+// Advance the active mission one step. Returns 'complete' when it finishes.
+export function updateMission(G, dt) {
+  const m = G.mission;
+  if (!m || m.done) return null;
+  const p = G.player;
+
+  if (m.id === 1) {
+    if (m.stage === 0) {
+      // Stage 0: reach and steal the Falco GT.
+      const falco = G.cars.find((c) => c.type.key === 'falco' && c.driver === 'player');
+      if (falco) {
+        m.stage = 1;
+        m.marker = { x: POIS.garage.x, y: POIS.garage.y, label: 'Rico Garage' };
+        toast(G, 'Got it! Deliver the Falco GT to Rico Garage.');
+      }
+    } else if (m.stage === 1) {
+      const falco = G.cars.find((c) => c.type.key === 'falco' && c.driver === 'player');
+      if (falco && dist2(falco.x, falco.y, POIS.garage.x, POIS.garage.y) < 110 * 110) {
+        return completeMission(G);
+      }
+    }
+  } else if (m.id === 2) {
+    G.missionTimer -= dt;
+    if (dist2(p.x, p.y, POIS.courierDrop.x, POIS.courierDrop.y) < 90 * 90) {
+      return completeMission(G);
+    }
+    if (G.missionTimer <= 0) {
+      toast(G, 'Too slow! The courier run failed — try again.', 4);
+      G.missionTimer = 95;
+    }
+  } else if (m.id === 3) {
+    for (const c of G.crates) {
+      if (!c.taken && dist2(p.x, p.y, c.x, c.y) < 46 * 46) {
+        c.taken = true;
+        m.progress += 1;
+        burst(G, c.x, c.y, '#ffd94a', 12, 160, 0.6);
+        toast(G, `Crate ${m.progress} of 6 collected.`);
+        const next = G.crates.find((k) => !k.taken);
+        m.marker = next ? { x: next.x, y: next.y, label: 'Crate' } : null;
+      }
+    }
+    if (m.progress >= 6) return completeMission(G);
+  } else if (m.id === 4) {
+    m.progress = G.stats.kills - (G.stats.killsAtMissionStart || 0);
+    if (G.enemies.length === 0) return completeMission(G);
+  } else if (m.id === 5) {
+    G.missionTimer -= dt;
+    if (G.wanted < 3) raiseWanted(G, 3);
+    if (G.missionTimer <= 0) return completeMission(G);
+  } else if (m.id === 6) {
+    if (G.enemies.length === 0) {
+      if (m.wave >= 3) return completeMission(G);
+      m.wave += 1;
+      spawnViperWave(G, m.wave);
+      toast(G, `Wave ${m.wave} of 3 — they keep coming!`, 4);
+    }
   }
   return null;
 }
 
-export function missionObjective(g) {
-  const m = g.mission;
-  if (!m) return 'Free roam — press E near a car to drive it.';
-  if (m.index === 0) return m.stage === 'steal' ? 'Steal the red Falco GT downtown' : 'Deliver the Falco GT to Rico Garage';
-  if (m.index === 1) return `Courier: reach drop ${m.checkpoint + 1}/3 — ${Math.ceil(m.timer)}s left`;
-  if (m.index === 2) return `Collect the supply crates — ${m.collected}/6`;
-  if (m.index === 3) return `Clear the Viper gang in Coral Park — ${g.enemies.length} left`;
-  if (m.index === 4) return m.stage === 'survive' ? `Survive the heat — ${Math.ceil(m.timer)}s left` : 'Lose the tail: reach the hideout';
-  if (m.index === 5) return `Finale: clear wave ${m.wave}/3 at the Voss Mansion`;
-  return '';
-}
-
-function completeMission(g) {
-  const m = g.mission;
-  g.money += m.def.reward;
-  g.toast(`Mission complete! +$${m.def.reward}`, '#8be28b');
-  if (g.audio) g.audio.cash();
-  g.saveGame();
-  const next = m.index + 1;
-  if (next >= MISSION_DEFS.length) {
-    g.mission = null;
-    g.finale();
-    return;
+// Pay out the mission, bank the reward, and queue the next one.
+export function completeMission(G) {
+  const m = G.mission;
+  m.done = true;
+  G.player.money += m.reward;
+  G.stats.moneyEarned += m.reward;
+  G.stats.missionsDone += 1;
+  toast(G, `Mission complete: ${m.name} — +$${m.reward}`, 5);
+  burst(G, G.player.x, G.player.y, '#ffd94a', 24, 240, 1.0);
+  if (m.id === 6) {
+    G.screen = 'finale';
+    G.finaleShown = true;
+    return 'finale';
   }
-  startMission(g, next);
+  // The next mission starts after a short breather.
+  G.nextMissionAt = G.time + 3;
+  G.pendingMission = m.id + 1;
+  return 'complete';
 }
 
-export function updateMission(g, dt) {
-  const m = g.mission;
-  if (!m) return;
-  const px = g.player.car ? g.player.car.x : g.player.x;
-  const py = g.player.car ? g.player.car.y : g.player.y;
-
-  if (m.index === 0) {
-    if (m.stage === 'steal' && g.player.car === m.targetCar) {
-      m.stage = 'deliver';
-      g.toast('Got the Falco! Take it to Rico Garage.', '#ffd98a');
-    } else if (m.stage === 'deliver' && g.player.car === m.targetCar && dist(px, py, GARAGE.x, GARAGE.y) < 110) {
-      completeMission(g);
+// Vipers chase the player and shoot when close enough.
+export function updateEnemies(G, dt) {
+  const p = G.player;
+  for (let i = G.enemies.length - 1; i >= 0; i -= 1) {
+    const e = G.enemies[i];
+    if (e.hp <= 0) {
+      G.enemies.splice(i, 1);
+      continue;
     }
-  } else if (m.index === 1) {
-    m.timer -= dt;
-    const p = COURIER_POINTS[m.checkpoint];
-    if (p && dist(px, py, p.x, p.y) < 80) {
-      m.checkpoint += 1;
-      g.toast(`Drop ${m.checkpoint}/3 delivered`, '#8be28b');
-      if (g.audio) g.audio.pickup();
-      if (m.checkpoint >= COURIER_POINTS.length) completeMission(g);
-    } else if (m.timer <= 0) {
-      g.toast('Courier run failed — too slow. Try again.', '#ff5a4e');
-      startMission(g, 1);
+    const d = Math.sqrt(dist2(e.x, e.y, p.x, p.y));
+    e.angle = Math.atan2(p.y - e.y, p.x - e.x);
+    if (d > 280) {
+      e.x += Math.cos(e.angle) * e.speed * dt;
+      e.y += Math.sin(e.angle) * e.speed * dt;
+    } else if (d < 180) {
+      e.x -= Math.cos(e.angle) * e.speed * 0.6 * dt;
+      e.y -= Math.sin(e.angle) * e.speed * 0.6 * dt;
     }
-  } else if (m.index === 2) {
-    for (const c of g.crates) {
-      if (!c.taken && dist(px, py, c.x, c.y) < 55) {
-        c.taken = true;
-        m.collected += 1;
-        g.toast(`Crate ${m.collected}/6 collected`, '#8be28b');
-        if (g.audio) g.audio.pickup();
-      }
-    }
-    if (m.collected >= 6) completeMission(g);
-  } else if (m.index === 3) {
-    if (g.enemies.length === 0) completeMission(g);
-  } else if (m.index === 4) {
-    if (m.stage === 'survive') {
-      // Keep the heat pinned at three stars while the timer runs.
-      if (g.heat < 60) g.heat = 60;
-      m.timer -= dt;
-      if (m.timer <= 0) {
-        m.stage = 'hideout';
-        g.toast('You made it through! Now reach the hideout.', '#ffd98a');
-      }
-    } else if (dist(px, py, HIDEOUT.x, HIDEOUT.y) < 90) {
-      completeMission(g);
-    }
-  } else if (m.index === 5) {
-    if (g.enemies.length === 0) {
-      if (m.wave >= 3) {
-        completeMission(g);
-      } else {
-        m.wave += 1;
-        g.toast(`Wave ${m.wave}/3 incoming!`, '#ff5a4e');
-        spawnGang(g, 4, MANSION.x, MANSION.y, 140);
+    if (d < 460) {
+      e.shootTimer -= dt;
+      if (e.shootTimer <= 0) {
+        e.shootTimer = 1.1 + G.rng() * 0.9;
+        // Enemy fire is deliberately less accurate than the player's.
+        const aim = e.angle + (G.rng() - 0.5) * 0.3;
+        G.bullets.push({
+          x: e.x + Math.cos(aim) * 22, y: e.y + Math.sin(aim) * 22,
+          vx: Math.cos(aim) * 700, vy: Math.sin(aim) * 700,
+          damage: 9, owner: 'enemy', life: 0.9,
+        });
       }
     }
   }
 }
+
+// Snapshot the kill count when a kill-count mission starts, so progress is exact.
+export function markKillsBaseline(G) {
+  G.stats.killsAtMissionStart = G.stats.kills;
+}
+
+export { clamp };

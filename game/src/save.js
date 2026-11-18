@@ -1,5 +1,7 @@
-// Save and load: one localStorage slot keeps money, mission progress, owned
-// weapons and health between visits. Corrupt or missing saves start fresh.
+// save.js — localStorage save/load for SOLMAR. The save holds money, the
+// mission reached, owned weapons and lifetime stats. It never holds the
+// world layout: the city is regenerated from the seed on every visit.
+
 import { SAVE_KEY } from './config.js';
 
 export function loadSave() {
@@ -14,8 +16,16 @@ export function loadSave() {
   }
 }
 
-export function writeSave(data) {
+export function writeSave(G) {
   try {
+    const data = {
+      money: G.player.money,
+      missionIndex: Math.max(G.missionIndex, G.stats.missionsDone),
+      owned: G.player.owned,
+      ammo: G.player.ammo,
+      stats: G.stats,
+      savedAt: Date.now(),
+    };
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     return true;
   } catch {

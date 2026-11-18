@@ -1,245 +1,271 @@
-// The HUD, minimap and menus: money, health, wanted stars, weapon, objective,
-// toasts, and the title / pause / busted / wasted / finale screens.
-import { FONT, MISSION_DEFS, ROAD_X, ROAD_Y, WEAPONS, WORLD_H, WORLD_W } from './config.js';
-import { missionObjective } from './missions.js';
+// hud.js — the heads-up display for SOLMAR: wanted stars, money, the mission
+// objective, the weapon panel, toasts, the speed panel and the minimap.
+//
+// Layout rules this file exists to protect (learned the hard way):
+// - The speed panel sits clearly ABOVE the minimap, with a gap, and the car
+//   name is on its own line above the speed number — never overlapping.
+// - The "SOLMAR BAY" caption is its own small pill INSIDE the top of the
+//   minimap, not on the seam between the speed panel and the minimap.
+// - Toast panels are sized to their measured message text, never a fixed
+//   narrow pill the text can spill out of.
+// - The weapon panel is about 300px wide so "[Q] switch [R] reload" fits.
 
-const STAR = '★';
+import { VIEW_W, VIEW_H, WORLD_W, WORLD_H, WEAPONS, WEAPON_ORDER, DISTRICTS, POIS } from './config.js';
 
-export function createHud(canvas) {
-  const ctx = canvas.getContext('2d');
-  const view = { w: 1280, h: 800 };
+const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
-  function resize(w, h) {
-    view.w = w;
-    view.h = h;
-  }
-
-  const fonts = new Map();
-  function text(str, x, y, size, color, align = 'left', bold = false) {
-    const key = `${size}:${bold ? 1 : 0}`;
-    if (!fonts.has(key)) fonts.set(key, `${bold ? '700 ' : ''}${size}px ${FONT}`);
-    ctx.font = fonts.get(key);
-    ctx.fillStyle = color;
-    ctx.textAlign = align;
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillText(str, x, y);
-  }
-
-  function panel(x, y, w, h, alpha = 0.55) {
-    ctx.fillStyle = `rgba(12,14,22,${alpha})`;
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, 8);
-    ctx.fill();
-  }
-
-  function drawStars(g) {
-    const x = view.w - 24;
-    const y = 44;
-    for (let i = 0; i < 5; i += 1) {
-      text(STAR, x - i * 34, y, 30, i < g.wanted ? '#ffcf3a' : 'rgba(255,255,255,0.22)', 'right', true);
-    }
-    if (g.wanted > 0) text('WANTED', x - 5 * 34 - 8, y, 15, '#ff5a4e', 'right', true);
-  }
-
-  function drawMinimap(g) {
-    const mw = 190;
-    const mh = Math.round(mw * (WORLD_H / WORLD_W));
-    const x0 = view.w - mw - 16;
-    const y0 = view.h - mh - 16;
-    panel(x0 - 6, y0 - 6, mw + 12, mh + 12, 0.6);
-    const sx = mw / WORLD_W;
-    const sy = mh / WORLD_H;
-    // Water.
-    ctx.fillStyle = '#22708f';
-    ctx.fillRect(x0, y0 + 2200 * sy, mw, (WORLD_H - 2200) * sy);
-    ctx.fillRect(x0 + 3000 * sx, y0, (WORLD_W - 3000) * sx, mh);
-    // Park.
-    ctx.fillStyle = '#5f9e4d';
-    ctx.fillRect(x0 + 1000 * sx, y0 + 1000 * sy, 400 * sx, 400 * sy);
-    // Roads.
-    ctx.strokeStyle = 'rgba(230,230,230,0.75)';
-    ctx.lineWidth = 2;
-    for (const rx of ROAD_X) {
-      ctx.beginPath();
-      ctx.moveTo(x0 + rx * sx, y0);
-      ctx.lineTo(x0 + rx * sx, y0 + mh);
-      ctx.stroke();
-    }
-    for (const ry of ROAD_Y) {
-      ctx.beginPath();
-      ctx.moveTo(x0, y0 + ry * sy);
-      ctx.lineTo(x0 + mw, y0 + ry * sy);
-      ctx.stroke();
-    }
-    // Mission marker.
-    const m = g.missionMarker ? g.missionMarker() : null;
-    if (m) {
-      ctx.fillStyle = '#ffd98a';
-      ctx.beginPath();
-      ctx.arc(x0 + m.x * sx, y0 + m.y * sy, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#8a5a00';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-    // Police dots.
-    ctx.fillStyle = '#5aa8ff';
-    for (const c of g.cops) {
-      ctx.beginPath();
-      ctx.arc(x0 + c.x * sx, y0 + c.y * sy, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    for (const car of g.patrols) {
-      ctx.beginPath();
-      ctx.arc(x0 + car.x * sx, y0 + car.y * sy, 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // Player arrow.
-    const px = x0 + g.player.x * sx;
-    const py = y0 + g.player.y * sy;
-    ctx.fillStyle = '#ffffff';
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.rotate(g.player.car ? g.player.car.angle : g.player.angle);
-    ctx.beginPath();
-    ctx.moveTo(7, 0);
-    ctx.lineTo(-5, -5);
-    ctx.lineTo(-5, 5);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-    // Caption on its own pill inside the top of the minimap, so it never
-    // collides with the speed panel sitting above the minimap.
-    const capW = 96;
-    panel(x0 + (mw - capW) / 2, y0 + 6, capW, 18, 0.65);
-    text('SOLMAR BAY', x0 + mw / 2, y0 + 19, 11, 'rgba(255,255,255,0.85)', 'center', true);
-  }
-
-  function drawHud(g) {
-    // Money + health, top-left.
-    panel(16, 14, 210, 64);
-    text(`$${g.money.toLocaleString('en-US')}`, 30, 42, 26, '#8be28b', 'left', true);
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.fillRect(30, 52, 182, 10);
-    ctx.fillStyle = g.player.hp > 30 ? '#4fc3f7' : '#ff5a4e';
-    ctx.fillRect(30, 52, Math.max(0, 182 * (g.player.hp / 100)), 10);
-    // Wanted stars, top-right.
-    drawStars(g);
-    // Objective, top-centre.
-    const obj = missionObjective(g);
-    ctx.font = '700 15px system-ui, -apple-system, "Segoe UI", sans-serif';
-    const ow = Math.min(560, ctx.measureText(obj).width + 40);
-    panel((view.w - ow) / 2, 14, ow, 34);
-    text(obj, view.w / 2, 37, 15, '#ffffff', 'center', true);
-    // Weapon, bottom-left. Panel is wide enough for the switch/reload hint.
-    const w = WEAPONS[g.player.weapon];
-    panel(16, view.h - 66, 300, 50);
-    text(w.name, 30, view.h - 42, 16, '#ffffff', 'left', true);
-    const ammo = g.player.reloading ? 'RELOADING…' : `${g.player.ammo} / ${g.player.reserve}`;
-    text(ammo, 30, view.h - 22, 15, g.player.reloading ? '#ffcf3a' : '#e8e8e8', 'left');
-    text('[Q] switch  [R] reload', 150, view.h - 22, 12, 'rgba(255,255,255,0.55)', 'left');
-    // Speed when driving — its own tall panel above the minimap, with a clear
-    // gap to the minimap and the car name on a separate line above the speed
-    // number, so the name, the number and the minimap never overlap.
-    if (g.player.car) {
-      const kmh = Math.round(Math.abs(g.player.car.speed) * 0.55);
-      const mh = Math.round(190 * (WORLD_H / WORLD_W));
-      const mapTop = view.h - mh - 16 - 6; // top edge of the minimap panel
-      const sy = mapTop - 12 - 74; // 12px gap, 74px tall panel
-      panel(view.w - 206, sy, 190, 74);
-      text(g.player.car.name, view.w - 111, sy + 24, 13, 'rgba(255,255,255,0.85)', 'center', true);
-      text(`${kmh}`, view.w - 96, sy + 64, 34, '#ffffff', 'center', true);
-      text('km/h', view.w - 40, sy + 64, 13, 'rgba(255,255,255,0.6)', 'center');
-    }
-    // Minimap, bottom-right (above the speed panel when driving).
-    drawMinimap(g);
-    // Shop prompt.
-    if (g.nearShop) {
-      panel((view.w - 420) / 2, view.h - 130, 420, 34);
-      text(`Press E — ${g.nearShop.name}: ${g.nearShop.desc}`, view.w / 2, view.h - 107, 15, '#ffd98a', 'center', true);
-    }
-    // Car prompt.
-    if (g.nearCar && !g.player.car) {
-      panel((view.w - 300) / 2, view.h - 130, 300, 34);
-      text(`Press E — steal the ${g.nearCar.name}`, view.w / 2, view.h - 107, 15, '#ffd98a', 'center', true);
-    }
-    // Toasts — each panel is sized to its own message so long text never
-    // spills past the panel edges.
-    let ty = 66;
-    for (const t of g.toasts) {
-      const alpha = Math.min(1, t.life / 0.8);
-      ctx.font = `700 15px ${FONT}`;
-      const tw = Math.min(view.w - 32, ctx.measureText(t.message).width + 40);
-      ctx.globalAlpha = alpha;
-      panel((view.w - tw) / 2, ty, tw, 30, 0.55);
-      text(t.message, view.w / 2, ty + 21, 15, t.color, 'center', true);
-      ctx.globalAlpha = 1;
-      ty += 38;
-    }
-    // Controls hint, first seconds of play.
-    if (g.playTime < 9 && g.screen === 'playing') {
-      text('WASD move / drive · E enter car & shops · Mouse aim · Click shoot · R reload · Esc pause', view.w / 2, view.h - 170, 14, 'rgba(255,255,255,0.8)', 'center');
-    }
-  }
-
-  function drawMenuPanel(title, lines, prompt, accent = '#ffd98a') {
-    panel((view.w - 640) / 2, (view.h - 380) / 2, 640, 380, 0.78);
-    text(title, view.w / 2, (view.h - 380) / 2 + 84, 52, accent, 'center', true);
-    let y = (view.h - 380) / 2 + 140;
-    for (const line of lines) {
-      text(line, view.w / 2, y, 18, '#e8e8e8', 'center');
-      y += 30;
-    }
-    text(prompt, view.w / 2, (view.h - 380) / 2 + 340, 20, '#ffd98a', 'center', true);
-  }
-
-  function drawTitle(g) {
-    // Big sun-soaked title over the city, then a control panel below it.
-    text('SOLMAR', view.w / 2, view.h * 0.26, 92, '#ffd98a', 'center', true);
-    text('STREETS OF THE SUN', view.w / 2, view.h * 0.26 + 52, 26, '#ffffff', 'center', true);
-    text('An open-world crime story in Solmar Bay — steal cars, dodge the heat,', view.w / 2, view.h * 0.26 + 96, 17, 'rgba(255,255,255,0.9)', 'center');
-    text('run six missions for Rico, and take the crown from the Voss Mansion.', view.w / 2, view.h * 0.26 + 120, 17, 'rgba(255,255,255,0.9)', 'center');
-    const hasSave = !!g.saveData;
-    const py = view.h * 0.52;
-    panel((view.w - 640) / 2, py, 640, 190, 0.78);
-    text('WASD move / drive · E enter cars & shops · Mouse aim · Click shoot', view.w / 2, py + 44, 17, '#e8e8e8', 'center');
-    text('R reload · Q switch weapon · Esc pause · M mute', view.w / 2, py + 74, 17, '#e8e8e8', 'center');
-    text(hasSave ? 'Press Enter — Continue your story' : 'Press Enter — Start a new story', view.w / 2, py + 124, 22, '#ffd98a', 'center', true);
-    if (hasSave) text(`Save: $${hasSave.money} · Mission ${Math.min(hasSave.missionIndex + 1, 6)} of 6`, view.w / 2, py + 156, 15, 'rgba(255,255,255,0.7)', 'center');
-  }
-
-  function drawPaused() {
-    drawMenuPanel('PAUSED', ['Take a breath. Solmar Bay waits for no one —', 'except right now.'], 'Press Esc to keep playing');
-  }
-
-  function drawBusted(g) {
-    drawMenuPanel('BUSTED', [`The Solmar Bay PD caught you. You lost $${g.bustedLoss}.`, 'Your heat is cleared — lay low for a while.'], 'Press Enter to get back out there');
-  }
-
-  function drawWasted(g) {
-    drawMenuPanel('WASTED', ['You went down in Solmar Bay.', `The clinic patched you up for $${g.wastedLoss}.`], 'Press Enter to get back out there');
-  }
-
-  function drawFinale(g) {
-    // Dark panel behind the text so it reads over the roads and the mansion.
-    panel((view.w - 760) / 2, view.h * 0.16, 760, 210, 0.62);
-    text('KING OF SOLMAR', view.w / 2, view.h * 0.16 + 78, 72, '#ffd98a', 'center', true);
-    text('The Voss Mansion is yours. The whole bay answers to you now.', view.w / 2, view.h * 0.16 + 122, 20, '#ffffff', 'center');
-    text(`Final take: $${g.money.toLocaleString('en-US')} · All 6 missions complete`, view.w / 2, view.h * 0.16 + 158, 18, '#e8e8e8', 'center');
-    text('Press Enter — free roam Solmar Bay', view.w / 2, view.h * 0.16 + 196, 20, '#ffd98a', 'center', true);
-  }
-
-  function draw(g) {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    if (g.screen === 'title') drawTitle(g);
-    else if (g.screen === 'playing') drawHud(g);
-    else if (g.screen === 'paused') { drawHud(g); drawPaused(); }
-    else if (g.screen === 'busted') drawBusted(g);
-    else if (g.screen === 'wasted') drawWasted(g);
-    else if (g.screen === 'finale') drawFinale(g);
-  }
-
-  return { draw, resize, text };
+function panel(ctx, x, y, w, h, alpha = 0.82) {
+  ctx.fillStyle = `rgba(12, 14, 20, ${alpha})`;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 8);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
 }
 
-export { MISSION_DEFS };
+function text(ctx, value, x, y, size, color, align = 'left', weight = 600) {
+  ctx.font = `${weight} ${size}px ${FONT}`;
+  ctx.fillStyle = color;
+  ctx.textAlign = align;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(value, x, y);
+}
+
+// Wanted stars, top-left, with a "WANTED" label.
+export function drawWanted(ctx, G) {
+  const x = 16;
+  const y = 16;
+  panel(ctx, x, y, 190, 56);
+  text(ctx, 'WANTED', x + 14, y + 22, 12, '#ffb84d', 'left', 800);
+  for (let i = 0; i < 5; i += 1) {
+    const sx = x + 16 + i * 34;
+    const sy = y + 44;
+    ctx.font = '22px ' + FONT;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = i < G.wanted ? '#ffd94a' : 'rgba(255,255,255,0.25)';
+    ctx.fillText('★', sx, sy);
+  }
+}
+
+// Money and health, top-right.
+export function drawMoney(ctx, G) {
+  const w = 210;
+  const x = VIEW_W - w - 16;
+  const y = 16;
+  panel(ctx, x, y, w, 56);
+  text(ctx, `$${G.player.money.toLocaleString('en-US')}`, x + w - 14, y + 26, 22, '#7dff8a', 'right', 800);
+  const hpW = w - 28;
+  const hpY = y + 40;
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillRect(x + 14, hpY, hpW, 8);
+  ctx.fillStyle = G.player.hp > 50 ? '#4ade80' : G.player.hp > 25 ? '#facc15' : '#ef4444';
+  ctx.fillRect(x + 14, hpY, hpW * Math.max(0, G.player.hp) / 100, 8);
+  text(ctx, 'HP', x + 14, y + 26, 12, '#ffffffaa', 'left', 700);
+}
+
+// Mission objective panel, under the money panel.
+export function drawMission(ctx, G) {
+  const m = G.mission;
+  if (!m) return;
+  const w = 320;
+  const x = VIEW_W - w - 16;
+  const y = 84;
+  const lines = wrapText(ctx, m.brief, 15, w - 28);
+  const h = 62 + lines.length * 19;
+  panel(ctx, x, y, w, h);
+  text(ctx, `MISSION ${m.id} — ${m.name.toUpperCase()}`, x + 14, y + 24, 14, '#ffd94a', 'left', 800);
+  lines.forEach((line, i) => text(ctx, line, x + 14, y + 46 + i * 19, 15, '#ffffff', 'left', 500));
+  const bottom = y + h - 14;
+  if (m.id === 2 || m.id === 5) {
+    text(ctx, `TIME  ${Math.max(0, Math.ceil(G.missionTimer))}s`, x + 14, bottom, 16, '#ff6b6b', 'left', 800);
+  } else if (m.id === 3) {
+    text(ctx, `CRATES  ${m.progress} / 6`, x + 14, bottom, 16, '#ffffff', 'left', 800);
+  } else if (m.id === 4) {
+    text(ctx, `VIPERS DOWN  ${m.progress} / 8`, x + 14, bottom, 16, '#ffffff', 'left', 800);
+  } else if (m.id === 6) {
+    text(ctx, `WAVE  ${m.wave} / 3`, x + 14, bottom, 16, '#ffffff', 'left', 800);
+  } else if (m.id === 1) {
+    text(ctx, m.stage === 0 ? 'STEAL THE FALCO GT' : 'DELIVER TO GARAGE', x + 14, bottom, 16, '#ffffff', 'left', 800);
+  }
+  text(ctx, `REWARD $${m.reward}`, x + w - 14, bottom, 16, '#7dff8a', 'right', 800);
+}
+
+function wrapText(ctx, str, size, maxW) {
+  ctx.font = `500 ${size}px ${FONT}`;
+  const words = str.split(' ');
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxW && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+// Toasts, centred near the top. Each panel is measured to its text.
+export function drawToasts(ctx, G) {
+  let y = 150;
+  for (const t of G.toasts) {
+    ctx.font = '600 16px ' + FONT;
+    const w = ctx.measureText(t.text).width + 36;
+    const x = (VIEW_W - w) / 2;
+    const alpha = Math.min(0.88, t.t);
+    ctx.fillStyle = `rgba(12, 14, 20, ${alpha})`;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, 34, 17);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 217, 74, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    text(ctx, t.text, VIEW_W / 2, y + 22, 16, '#ffffff', 'center', 600);
+    y += 42;
+  }
+}
+
+// Weapon panel, bottom-left, about 300px wide so the hints fit inside.
+export function drawWeapon(ctx, G) {
+  const p = G.player;
+  const w = 300;
+  const h = 74;
+  const x = 16;
+  const y = VIEW_H - h - 16;
+  panel(ctx, x, y, w, h);
+  const weapon = WEAPONS[p.weapon];
+  text(ctx, weapon.name.toUpperCase(), x + 14, y + 26, 18, '#ffffff', 'left', 800);
+  const magText = p.reloading > 0 ? 'RELOADING…' : `${p.mag[p.weapon]} / ${p.ammo[p.weapon]}`;
+  text(ctx, magText, x + w - 14, y + 26, 18, '#ffd94a', 'right', 800);
+  // Owned weapons as small slots.
+  let sx = x + 14;
+  for (const key of WEAPON_ORDER) {
+    const owned = p.owned.includes(key);
+    ctx.fillStyle = p.weapon === key ? '#ffd94a' : owned ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)';
+    ctx.beginPath();
+    ctx.roundRect(sx, y + 38, 54, 22, 5);
+    ctx.fill();
+    text(ctx, WEAPONS[key].name, sx + 27, y + 54, 12, p.weapon === key ? '#111' : '#fff', 'center', 700);
+    sx += 62;
+  }
+  text(ctx, '[Q] switch   [R] reload', x + 196, y + 54, 12, '#ffffffaa', 'left', 600);
+}
+
+// Speed panel ABOVE the minimap, with the car name on its own line above
+// the speed number. The minimap sits below it with a clear gap.
+export function drawSpeed(ctx, G) {
+  const p = G.player;
+  if (!p.inCar) return;
+  const mapW = 220;
+  const mapH = 165;
+  const mapX = VIEW_W - mapW - 16;
+  const mapY = VIEW_H - mapH - 16;
+  const w = 220;
+  const h = 64;
+  const x = mapX;
+  const y = mapY - h - 12; // 12px gap above the minimap
+  panel(ctx, x, y, w, h);
+  text(ctx, p.inCar.type.name.toUpperCase(), x + w / 2, y + 22, 14, '#ffb84d', 'center', 800);
+  const kmh = Math.round(Math.abs(p.inCar.speed) * 0.55);
+  text(ctx, `${kmh}`, x + w / 2, y + 52, 26, '#ffffff', 'center', 800);
+  text(ctx, 'km/h', x + w - 16, y + 52, 12, '#ffffffaa', 'right', 600);
+}
+
+// Minimap, bottom-right. The SOLMAR BAY caption is a small pill INSIDE the
+// top of the minimap, with its own padding, not on the seam.
+export function drawMinimap(ctx, G) {
+  const mapW = 220;
+  const mapH = 165;
+  const x = VIEW_W - mapW - 16;
+  const y = VIEW_H - mapH - 16;
+  const sx = mapW / WORLD_W;
+  const sy = mapH / WORLD_H;
+  panel(ctx, x, y, mapW, mapH, 0.88);
+  // Water, park and hill tints.
+  ctx.fillStyle = '#2e7fa8';
+  ctx.fillRect(x + DISTRICTS.harbor.x * sx, y + DISTRICTS.harbor.y * sy, DISTRICTS.harbor.w * sx, DISTRICTS.harbor.h * sy);
+  ctx.fillStyle = '#69a854';
+  ctx.fillRect(x + DISTRICTS.park.x * sx, y + DISTRICTS.park.y * sy, DISTRICTS.park.w * sx, DISTRICTS.park.h * sy);
+  ctx.fillStyle = '#e3c98f';
+  ctx.fillRect(x, y + DISTRICTS.beach.y * sy, mapW, DISTRICTS.beach.h * sy);
+  // Roads.
+  ctx.strokeStyle = '#9aa0a8';
+  ctx.lineWidth = 2;
+  for (const ax of [400, 1000, 1600, 2200, 2800]) {
+    ctx.beginPath();
+    ctx.moveTo(x + ax * sx, y);
+    ctx.lineTo(x + ax * sx, y + mapH);
+    ctx.stroke();
+  }
+  for (const sy2 of [350, 800, 1250, 1700, 2150]) {
+    ctx.beginPath();
+    ctx.moveTo(x, y + sy2 * sy);
+    ctx.lineTo(x + mapW, y + sy2 * sy);
+    ctx.stroke();
+  }
+  // Mission marker.
+  if (G.mission && G.mission.marker) {
+    const mx = x + G.mission.marker.x * sx;
+    const my = y + G.mission.marker.y * sy;
+    ctx.fillStyle = '#ffd94a';
+    ctx.beginPath();
+    ctx.arc(mx, my, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  // Police dots.
+  ctx.fillStyle = '#3b82f6';
+  for (const car of G.cars) {
+    if (car.driver === 'police' && !car.dead) {
+      ctx.beginPath();
+      ctx.arc(x + car.x * sx, y + car.y * sy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // Player arrow.
+  const px = x + G.player.x * sx;
+  const py = y + G.player.y * sy;
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(G.player.angle);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(7, 0);
+  ctx.lineTo(-5, -5);
+  ctx.lineTo(-5, 5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  // Caption pill inside the top of the minimap.
+  ctx.font = '800 11px ' + FONT;
+  const label = 'SOLMAR BAY';
+  const lw = ctx.measureText(label).width + 18;
+  const lx = x + (mapW - lw) / 2;
+  const ly = y + 8;
+  ctx.fillStyle = 'rgba(12, 14, 20, 0.85)';
+  ctx.beginPath();
+  ctx.roundRect(lx, ly, lw, 20, 10);
+  ctx.fill();
+  ctx.fillStyle = '#ffd94a';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(label, x + mapW / 2, ly + 14);
+}
+
+// The whole HUD in play.
+export function drawHud(ctx, G) {
+  drawWanted(ctx, G);
+  drawMoney(ctx, G);
+  drawMission(ctx, G);
+  drawToasts(ctx, G);
+  drawWeapon(ctx, G);
+  drawSpeed(ctx, G);
+  drawMinimap(ctx, G);
+}

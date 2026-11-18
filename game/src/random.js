@@ -1,5 +1,6 @@
-// A small seeded random number generator (mulberry32): the same seed gives the
-// same city, the same traffic and the same screenshot scenes.
+// random.js — a small seeded random number generator (mulberry32): the same
+// seed gives the same city, the same traffic and the same screenshot scenes,
+// which is what makes the deterministic ?shot= scenes repeatable.
 
 export function createRandom(seed) {
   let a = seed | 0;
@@ -11,34 +12,8 @@ export function createRandom(seed) {
   };
 }
 
-export function pick(random, list) {
-  return list[Math.floor(random() * list.length)];
-}
+// Pick one element of an array with a seeded random function.
+export function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
 
-export function range(random, min, max) {
-  return min + random() * (max - min);
-}
-
-export function clamp(value, min, max) {
-  return value < min ? min : value > max ? max : value;
-}
-
-export function dist(ax, ay, bx, by) {
-  const dx = bx - ax;
-  const dy = by - ay;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
-export function angleTo(ax, ay, bx, by) {
-  return Math.atan2(by - ay, bx - ax);
-}
-
-// Shortest signed turn from angle `from` toward angle `to`, in (-PI, PI].
-export function turnToward(from, to, maxStep) {
-  let d = to - from;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d <= -Math.PI) d += Math.PI * 2;
-  if (d > maxStep) return maxStep;
-  if (d < -maxStep) return -maxStep;
-  return d;
-}
+// An integer in [min, max] with a seeded random function.
+export function randInt(rng, min, max) { return min + Math.floor(rng() * (max - min + 1)); }
