@@ -1,122 +1,168 @@
-// The player on foot: walking, aiming with the mouse, getting in and out of
-// cars, and using the city's shops.
-import { AMMO_COST, HEAL_COST, SPRAY_COST } from './config.js';
-import { hitsBuilding, inWorld } from './city.js';
-import { raiseWanted } from './police.js';
-import { clearWanted } from './police.js';
-import { fireBullet } from './combat.js';
-import { scarePeds } from './pedestrians.js';
+// SOLMAR — Streets of the Sun
+// The player on foot: walking, running, aiming, entering cars, and using the
+// three shops. Driving itself lives in vehicles.js; this file owns the body.
 
-export function updatePlayerOnFoot(state, input, dt) {
-  const player = state.player;
-  const axis = input.axis();
-  const speed = 175;
-  const nx = player.x + axis.x * speed * dt;
-  const ny = player.y + axis.y * speed * dt;
-  if (!hitsBuilding(state.city, nx, player.y, 13) && inWorld(nx, player.y, 16)) player.x = nx;
-  if (!hitsBuilding(state.city, player.x, ny, 13) && inWorld(player.x, ny, 16)) player.y = ny;
-  if (axis.x || axis.y) player.angle = Math.atan2(axis.y, axis.x);
+import { CONFIG } from './config.js';
+import { resolveBuildings, clampToMap, dist, toast, playerPos } from './world.js';
 
-  // Aim at the mouse in world coordinates.
-  const cam = state.camera;
-  const wx = (input.mouse.x - state.viewW / 2) / cam.zoom + cam.x;
-  const wy = (input.mouse.y - state.viewH / 2) / cam.zoom + cam.y;
-  player.aimAngle = Math.atan2(wy - player.y, wx - player.x);
-
-  if (player.fireCooldown > 0) player.fireCooldown -= dt;
-  if (player.reload > 0) {
-    player.reload -= dt;
-    if (player.reload <= 0) {
-      const take = Math.min(12, player.mag);
-      player.ammo = take;
-      player.mag -= take;
+/** Move the player on foot for one step. Returns nothing. */
+export function updatePlayerOnFoot(world, input, dt) {
+  const p = world.player;
+  if (p.inCar) return;
+  let mx = 0;
+  let my = 0;
+  if (input.left) mx -= 1;
+  if (input.right) mx += 1;
+  if (input.up) my -= 1;
+  if (input.down) my += 1;
+  const moving = mx !== 0 || my !== 0;
+  if (moving) {
+    const len = Math.hypot(mx, my);
+    const speed = input.run ? CONFIG.runSpeed : CONFIG.walkSpeed;
+    const nx = p.x + (mx / len) * speed * dt;
+    const ny = p.y + (my / len) * speed * dt;
+    const oldX = p.x;
+    const oldY = p.y;
+    p.x = nx;
+    if (resolveBuildings(world, p, CONFIG.playerRadius)) {
+      // Sliding: if the new spot is still blocked on one axis, keep the other.
+      p.x = oldX;
+      p.y = ny;
+      resolveBuildings(world, p, CONFIG.playerRadius);
+      if (isStuck(world, p)) { p.x = oldX; p.y = oldY; }
+    } else {
+      p.y = ny;
+      resolveBuildings(world, p, CONFIG.playerRadius);
     }
+    clampToMap(p, CONFIG.playerRadius);
+    p.angle = Math.atan2(my, mx);
   }
-  if (input.shooting() && player.fireCooldown <= 0 && player.reload <= 0) {
-    if (player.ammo > 0) fireBullet(state);
-    else if (player.mag > 0) player.reload = 1.1;
-  }
+  if (p.hurtFlash > 0) p.hurtFlash -= dt;
 }
 
-export function nearestCar(state, maxDist) {
+/** True when the player is wedged inside a building after a slide attempt. */
+function isStuck(world, p) {
+  for (const b of world.city.buildings) {
+    if (p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h) return true;
+  }
+  return false;
+}
+
+/** The nearest car to the player within reach, or null. */
+export function nearestCar(world, maxDist = 78) {
+  const p = world.player;
   let best = null;
   let bestD = maxDist;
-  for (const car of state.cars) {
-    if (car.dead) continue;
-    const d = Math.hypot(car.x - state.player.x, car.y - state.player.y);
+  const all = world.cars.concat(world.traffic);
+  for (const car of all) {
+    if (car.driver === 'player') continue;
+    const d = dist(p.x, p.y, car.x, car.y);
     if (d < bestD) { bestD = d; best = car; }
   }
   return best;
 }
 
-export function enterCar(state, car) {
-  const player = state.player;
-  if (car.isCop) return;
-  state.playerCar = car;
-  car.isPlayer = true;
-  car.targetSpeed = 0;
-  player.x = car.x; player.y = car.y;
-  // Stealing a car that is not yours is a crime — unless it is the one you
-  // already owned. Witnesses and patrols notice.
-  if (!car.owned) {
-    raiseWanted(state, 1);
-    scarePeds(state, car.x, car.y, 300);
-    state.message = 'Car stolen — the heat is on';
-    state.messageT = 2.5;
+/** Step into the nearest car: it becomes the player's car. */
+export function enterCar(world, car) {
+  const p = world.player;
+  p.inCar = car;
+  car.driver = 'player';
+  car.parked = false;
+  if (car.wasTraffic) {
+    car.wasTraffic = false;
+    world.traffic = world.traffic.filter((c) => c !== car);
+    world.cars.push(car);
   }
-  car.owned = true;
-  state.audio.ensure();
+  world.stats.carsStolen += 1;
+  addHeat(world, CONFIG.heatPerCarTheft, 'Mencuri mobil!');
+  toast(world, `Mengendarai ${car.typeName} — tekan E untuk keluar.`, 2.5);
 }
 
-export function exitCar(state) {
-  const car = state.playerCar;
+/** Step out of the car where it stands. */
+export function exitCar(world) {
+  const p = world.player;
+  const car = p.inCar;
   if (!car) return;
-  car.isPlayer = false;
+  car.driver = 'parked';
   car.speed = 0;
-  state.playerCar = null;
-  const a = car.angle + Math.PI / 2;
-  state.player.x = car.x + Math.cos(a) * 34;
-  state.player.y = car.y + Math.sin(a) * 34;
+  p.x = car.x + Math.cos(car.angle + Math.PI / 2) * 46;
+  p.y = car.y + Math.sin(car.angle + Math.PI / 2) * 46;
+  p.inCar = null;
 }
 
-export function nearestShop(state, maxDist) {
-  let best = null;
-  let bestD = maxDist;
-  for (const shop of state.city.shops) {
-    const d = Math.hypot(shop.x - state.player.x, shop.y - state.player.y);
-    if (d < bestD) { bestD = d; best = shop; }
-  }
-  return best;
+/** The prompt to show when the player can press E: a car, a shop, or nothing. */
+export function nearInteractable(world) {
+  const pos = playerPos(world);
+  const shops = world.city.shops;
+  const near = (spot, range = 95) => dist(pos.x, pos.y, spot.x, spot.y) < range;
+  if (near(shops.weapon)) return 'E — Beli senjata';
+  if (near(shops.clinic)) return 'E — Klinik ($150)';
+  if (near(shops.spray)) return 'E — Bengkel cat ($300)';
+  if (!world.player.inCar && nearestCar(world, 78)) return 'E — Naik mobil';
+  if (world.player.inCar) return 'E — Keluar mobil';
+  return null;
 }
 
-export function useShop(state, shop) {
-  if (shop.kind === 'gun') {
-    if (state.cash >= AMMO_COST) {
-      state.cash -= AMMO_COST;
-      state.player.mag += 24;
-      state.message = 'Bought 24 rounds — $50';
-      state.audio.pickup();
-    } else state.message = 'Not enough cash for ammo ($50)';
-    state.messageT = 2;
-  } else if (shop.kind === 'clinic') {
-    if (state.cash >= HEAL_COST) {
-      state.cash -= HEAL_COST;
-      state.player.health = 100;
-      state.message = 'Patched up — $100';
-      state.audio.pickup();
-    } else state.message = 'Not enough cash for treatment ($100)';
-    state.messageT = 2;
-  } else if (shop.kind === 'spray') {
-    if (state.playerCar) {
-      if (state.cash >= SPRAY_COST && state.wanted > 0) {
-        state.cash -= SPRAY_COST;
-        clearWanted(state);
-        state.playerCar.color = '#c96f4a';
-        state.message = 'New paint, clean slate — $300';
-        state.audio.pickup();
-      } else if (state.wanted === 0) state.message = 'No heat to lose right now';
-      else state.message = 'Not enough cash for a respray ($300)';
-      state.messageT = 2;
-    } else state.message = 'Drive a car into the spray shop';
+/** Add wanted heat, clamped to the maximum, and show the reason. */
+export function addHeat(world, amount, reason) {
+  world.heat = Math.min(CONFIG.maxWanted, world.heat + amount);
+  world.wanted = Math.floor(world.heat);
+  if (reason) toast(world, reason, 2);
+}
+
+/** Use a shop when the player stands near it and presses E. */
+export function tryShop(world) {
+  const pos = playerPos(world);
+  const shops = world.city.shops;
+  const near = (spot, range = 95) => dist(pos.x, pos.y, spot.x, spot.y) < range;
+  if (near(shops.weapon)) {
+    buyWeapon(world);
+    return true;
   }
+  if (near(shops.clinic)) {
+    if (world.money >= CONFIG.clinicPrice && world.player.health < CONFIG.playerHealth) {
+      world.money -= CONFIG.clinicPrice;
+      world.player.health = Math.min(CONFIG.playerHealth, world.player.health + CONFIG.clinicHeal);
+      toast(world, `Klinik: kesehatan +${CONFIG.clinicHeal} ($${CONFIG.clinicPrice}).`);
+    } else if (world.player.health >= CONFIG.playerHealth) {
+      toast(world, 'Kesehatanmu sudah penuh.');
+    } else {
+      toast(world, `Klinik butuh $${CONFIG.clinicPrice} — uangmu tidak cukup.`);
+    }
+    return true;
+  }
+  if (near(shops.spray)) {
+    if (world.money >= CONFIG.sprayPrice && world.wanted > 0) {
+      world.money -= CONFIG.sprayPrice;
+      world.heat = 0;
+      world.wanted = 0;
+      toast(world, 'Bengkel cat: jejakmu hilang. Wanted bersih!');
+    } else if (world.wanted === 0) {
+      toast(world, 'Tidak ada wanted untuk dibersihkan.');
+    } else {
+      toast(world, `Bengkel cat butuh $${CONFIG.sprayPrice} — uangmu tidak cukup.`);
+    }
+    return true;
+  }
+  return false;
+}
+
+/** Buy the next weapon at the weapon shop, when the player can afford it. */
+function buyWeapon(world) {
+  const p = world.player;
+  const order = ['pistol', 'smg', 'shotgun'];
+  const idx = order.indexOf(p.weapon);
+  if (idx >= order.length - 1) {
+    toast(world, 'Kamu sudah punya senjata terbaik.');
+    return;
+  }
+  const next = CONFIG.weapons[idx + 1];
+  if (world.money < next.price) {
+    toast(world, `${next.name} harganya $${next.price} — uangmu $${world.money}.`);
+    return;
+  }
+  world.money -= next.price;
+  p.weapon = next.key;
+  p.ammo = next.mag;
+  toast(world, `Membeli ${next.name} seharga $${next.price}.`);
 }

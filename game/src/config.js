@@ -1,53 +1,107 @@
-// SOLMAR — tuning, palette and world constants. One place for every number the
-// rest of the game balances against, so a tweak here retunes the whole city.
-export const WORLD_W = 3200;
-export const WORLD_H = 2400;
-export const ROAD_W = 72;
-export const BLOCK = 400;
+// SOLMAR — Streets of the Sun
+// Configuration: every tuning value, name and price of the game lives here,
+// so the rest of the code reads one table instead of scattering numbers.
 
-// Vertical and horizontal road centre lines. The city is a grid; everything
-// else (buildings, parks, shops) lives in the blocks between these roads.
-export const V_ROADS = [300, 700, 1100, 1500, 1900, 2300, 2700];
-export const H_ROADS = [250, 550, 850, 1150, 1450, 1750, 2050];
+export const CONFIG = Object.freeze({
+  // World
+  worldWidth: 3200,
+  worldHeight: 2400,
+  viewWidth: 1280,
+  viewHeight: 800,
 
-export const STEP = 1 / 60;
-export const SAVE_KEY = 'solmar-save-v1';
+  // Roads: vertical avenues and horizontal streets (centre lines).
+  avenues: [400, 1000, 1600, 2200, 2800],
+  streets: [350, 800, 1250, 1700, 2150],
+  roadWidth: 140,
+  sidewalkWidth: 26,
 
-// Sun-soaked golden-hour palette. Warm asphalt, pale sidewalks, terracotta
-// roofs and turquoise water: one coherent look across every screen.
-export const PALETTE = {
-  grass: '#7fae62',
-  grassDark: '#6f9d55',
-  sand: '#e8cf9a',
-  water: '#2f8fb5',
-  waterDeep: '#22708f',
-  asphalt: '#3d3a38',
-  asphaltLine: '#d8c95c',
-  sidewalk: '#b9ac93',
-  crosswalk: '#e8e2d2',
-  roofA: '#c96f4a',
-  roofB: '#b85c50',
-  roofC: '#8a6f8e',
-  roofD: '#5f7d6a',
-  roofE: '#d9a441',
-  roofEdge: 'rgba(0,0,0,0.25)',
-  park: '#69a854',
-  tree: '#3f7d3a',
-  treeLight: '#5da24e',
-};
+  // Districts (x, y, w, h) used for naming, flavour and spawn rules.
+  districts: Object.freeze([
+    { name: 'Downtown', x: 1200, y: 150, w: 1200, h: 700 },
+    { name: 'Marina', x: 150, y: 1900, w: 2900, h: 500 },
+    { name: 'Residential', x: 150, y: 500, w: 700, h: 1200 },
+    { name: 'Industrial', x: 2400, y: 500, w: 650, h: 1200 },
+    { name: 'Mansion Hill', x: 2400, y: 150, w: 650, h: 350 },
+  ]),
 
-export const CAR_TYPES = {
-  sedan: { w: 46, h: 22, accel: 400, maxSpeed: 430, brake: 720, turn: 2.7, color: '#7d8aa0', name: 'Solano' },
-  taxi: { w: 46, h: 22, accel: 420, maxSpeed: 450, brake: 720, turn: 2.8, color: '#e8b93a', name: 'Cab' },
-  sports: { w: 48, h: 21, accel: 560, maxSpeed: 580, brake: 800, turn: 3.1, color: '#c23b3b', name: 'Falco GT' },
-  truck: { w: 58, h: 26, accel: 300, maxSpeed: 330, brake: 600, turn: 2.2, color: '#5b7d9c', name: 'Hauler' },
-  van: { w: 52, h: 24, accel: 340, maxSpeed: 360, brake: 650, turn: 2.4, color: '#8a8f98', name: 'Van' },
-  police: { w: 46, h: 22, accel: 520, maxSpeed: 540, brake: 800, turn: 3.0, color: '#22262e', name: 'Interceptor' },
-  muscle: { w: 48, h: 22, accel: 480, maxSpeed: 500, brake: 760, turn: 2.9, color: '#3f6d4e', name: 'Bravado' },
-};
+  // Player on foot
+  walkSpeed: 230,
+  runSpeed: 335,
+  playerRadius: 15,
+  playerHealth: 100,
 
-export const WANTED_DECAY_SECONDS = 26;
-export const SPRAY_COST = 300;
-export const AMMO_COST = 50;
-export const HEAL_COST = 100;
-export const BUSTED_FINE = 250;
+  // Camera: how fast it chases the player (per frame, 0..1).
+  cameraLerp: 0.12,
+
+  // Cars: seven stealable types, slowest first.
+  carTypes: Object.freeze([
+    { key: 'pipit', name: 'Pipit', topSpeed: 420, accel: 260, turn: 2.6, length: 62, width: 30, body: '#7fb069', roof: '#557a45' },
+    { key: 'komodo', name: 'Komodo', topSpeed: 470, accel: 290, turn: 2.5, length: 68, width: 32, body: '#4a7fa5', roof: '#2f5673' },
+    { key: 'kuda', name: 'Kuda', topSpeed: 450, accel: 270, turn: 2.2, length: 76, width: 34, body: '#b5542c', roof: '#7e3a1e' },
+    { key: 'badak', name: 'Badak', topSpeed: 480, accel: 280, turn: 2.3, length: 78, width: 36, body: '#5d5a68', roof: '#3d3a46' },
+    { key: 'gajah', name: 'Gajah', topSpeed: 430, accel: 240, turn: 2.0, length: 86, width: 38, body: '#c9a227', roof: '#8a6d14' },
+    { key: 'elang', name: 'Elang', topSpeed: 560, accel: 340, turn: 2.9, length: 70, width: 32, body: '#8e2f38', roof: '#5c1d24' },
+    { key: 'falco', name: 'Falco GT', topSpeed: 640, accel: 380, turn: 3.1, length: 72, width: 32, body: '#e8b93c', roof: '#a67c1a' },
+  ]),
+
+  // Traffic and crowds
+  trafficCount: 26,
+  pedCount: 34,
+  trafficColors: Object.freeze(['#c94f43', '#4a7fa5', '#7fb069', '#d8d3c3', '#5d5a68', '#b5542c', '#3f6d4e']),
+
+  // Wanted level
+  maxWanted: 5,
+  heatPerCarTheft: 1.0,
+  heatPerShot: 0.35,
+  heatPerPedHit: 0.8,
+  heatPerReport: 0.5,
+  heatDecayPerSecond: 0.06,
+  heatDecaySightSeconds: 4,
+
+  // Police
+  footCopSpeed: 250,
+  cruiserTopSpeed: 560,
+  arrestHoldSeconds: 1.2,
+  cruiserRamDamage: 12,
+
+  // Combat
+  weapons: Object.freeze([
+    { key: 'pistol', name: 'Pistol', damage: 25, rate: 0.30, mag: 0, reload: 0.0, spread: 0.03, price: 0 },
+    { key: 'smg', name: 'SMG Rapat', damage: 14, rate: 0.09, mag: 30, reload: 1.1, spread: 0.09, price: 350 },
+    { key: 'shotgun', name: 'Shotgun Lebar', damage: 13, rate: 0.75, mag: 6, reload: 1.6, spread: 0.22, price: 600, pellets: 5 },
+  ]),
+  bulletSpeed: 950,
+  enemyHealth: 60,
+  bossHealth: 220,
+  enemyShotDamage: 8,
+  enemyShotInterval: 1.15,
+
+  // Shops and money
+  sprayPrice: 300,
+  clinicPrice: 150,
+  clinicHeal: 60,
+  startingMoney: 0,
+
+  // Missions: title, briefing and reward, in story order.
+  missions: Object.freeze([
+    { title: 'Curi Falco GT', briefing: 'Seorang kolektor menunggu di garasi. Bawa Falco GT emas itu pulang.', reward: 500 },
+    { title: 'Kurir Kilat', briefing: 'Tiga paket, sembilan puluh detik. Jangan tanya isinya.', reward: 800 },
+    { title: 'Enam Peti', briefing: 'Peti-peti itu tersebar di seluruh kota. Kumpulkan semuanya.', reward: 600 },
+    { title: 'Rebut Turf', briefing: 'Delapan Viper menjaga wilayah itu. Bersihkan mereka semua.', reward: 1200 },
+    { title: 'Pelarian Tiga Bintang', briefing: 'Bertahan sembilan puluh detik dengan tiga bintang di kepalamu.', reward: 1500 },
+    { title: 'Finale Mansion', briefing: 'Tiga gelombang, lalu bos mereka. Akhiri malam ini.', reward: 5000 },
+  ]),
+  courierSeconds: 90,
+  getawaySeconds: 90,
+  getawayStars: 3,
+  cratesToCollect: 6,
+  vipersToClear: 8,
+  finaleWaves: Object.freeze([3, 4, 5]),
+
+  // Saving
+  saveKey: 'solmar-save-v1',
+
+  // Screenshot determinism
+  shotSeed: 1,
+  shotWarmupFrames: 150,
+});

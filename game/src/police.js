@@ -1,130 +1,139 @@
-// The wanted system: stars, police pursuit cars, foot cops, and getting
-// busted. Heat rises with crimes and cools when no officer can see the player.
-import { WANTED_DECAY_SECONDS } from './config.js';
-import { roadPointNear } from './city.js';
-import { createCar, moveWithCollision } from './vehicles.js';
+// SOLMAR — Streets of the Sun
+// The wanted level and the police: heat that rises with crime and decays out
+// of sight, foot officers who chase and arrest, and cruisers that intercept
+// and ram.
 
-export function raiseWanted(state, stars) {
-  state.wanted = Math.min(5, Math.max(state.wanted, stars));
-  state.wantedTimer = 0;
+import { CONFIG } from './config.js';
+import { range, pick } from './random.js';
+import { dist, angleTo, playerPos, resolveBuildings, clampToMap, toast } from './world.js';
+import { makeCar, damageCar } from './vehicles.js';
+
+/** A short label for the current heat, for the HUD. */
+export function wantedLabel(world) {
+  if (world.wanted === 0) return 'Aman';
+  if (world.wanted <= 2) return 'Diburu';
+  if (world.wanted <= 4) return 'Buron';
+  return 'Paling Dicari';
 }
 
-export function updateWanted(state, dt) {
-  // Cool down only when no cop is close enough to keep eyes on the player.
-  const copNear = state.cars.some((c) => c.isCop && !c.dead && Math.hypot(c.x - state.player.x, c.y - state.player.y) < 420);
-  if (state.wanted > 0 && !copNear) {
-    state.wantedTimer += dt;
-    if (state.wantedTimer >= WANTED_DECAY_SECONDS) {
-      state.wanted -= 1;
-      state.wantedTimer = 0;
+/** One step of the whole wanted system: decay, spawn, chase, arrest. */
+export function updateWanted(world, dt) {
+  const pos = playerPos(world);
+  const seen = policeCanSee(world, pos);
+  if (seen) world.unseenTimer = 0;
+  else world.unseenTimer += dt;
+  if (world.unseenTimer > CONFIG.heatDecaySightSeconds && world.heat > 0) {
+    world.heat = Math.max(0, world.heat - CONFIG.heatDecayPerSecond * dt);
+    world.wanted = Math.floor(world.heat);
+  }
+
+  const wantCops = world.wanted >= 1 ? Math.min(2, world.wanted) : 0;
+  const wantCruisers = world.wanted >= 2 ? Math.min(3, world.wanted - 1) : 0;
+  while (world.cops.length < wantCops) spawnFootCop(world, pos);
+  while (world.cruisers.length < wantCruisers) spawnCruiser(world, pos);
+  while (world.cops.length > wantCops) world.cops.pop();
+  while (world.cruisers.length > wantCruisers) world.cruisers.pop();
+
+  for (const cop of world.cops) updateFootCop(world, cop, pos, dt);
+  for (const cruiser of world.cruisers) updateCruiser(world, cruiser, pos, dt);
+}
+
+/** True when any officer is close enough to see the player. */
+function policeCanSee(world, pos) {
+  for (const cop of world.cops) {
+    if (dist(cop.x, cop.y, pos.x, pos.y) < 420) return true;
+  }
+  for (const cruiser of world.cruisers) {
+    if (dist(cruiser.x, cruiser.y, pos.x, pos.y) < 460) return true;
+  }
+  return false;
+}
+
+/** A foot officer appears at a road point near the player, off screen. */
+function spawnFootCop(world, pos) {
+  const rng = world.rng;
+  const avenue = pick(rng, world.city.avenues);
+  const street = pick(rng, world.city.streets);
+  const spot = rng() < 0.5
+    ? { x: avenue, y: pos.y + (rng() < 0.5 ? 520 : -520) }
+    : { x: pos.x + (rng() < 0.5 ? 520 : -520), y: street };
+  world.cops.push({
+    x: Math.max(40, Math.min(3160, spot.x)),
+    y: Math.max(40, Math.min(2140, spot.y)),
+    angle: 0, holdTimer: 0,
+  });
+}
+
+/** A patrol cruiser appears on a road near the player. */
+function spawnCruiser(world, pos) {
+  const rng = world.rng;
+  const avenue = pick(rng, world.city.avenues);
+  const street = pick(rng, world.city.streets);
+  const onAvenue = rng() < 0.5;
+  const car = makeCar('komodo', onAvenue ? avenue : pos.x + (rng() < 0.5 ? 560 : -560), onAvenue ? pos.y + (rng() < 0.5 ? 560 : -560) : street, 0, 'police');
+  car.body = '#20242e';
+  car.roof = '#20242e';
+  car.cruise = CONFIG.cruiserTopSpeed;
+  car.holdTimer = 0;
+  world.cruisers.push(car);
+}
+
+/** A foot officer runs at the player and holds on to arrest. */
+function updateFootCop(world, cop, pos, dt) {
+  const d = dist(cop.x, cop.y, pos.x, pos.y);
+  cop.angle = angleTo(cop.x, cop.y, pos.x, pos.y);
+  if (d > 30) {
+    cop.x += Math.cos(cop.angle) * CONFIG.footCopSpeed * dt;
+    cop.y += Math.sin(cop.angle) * CONFIG.footCopSpeed * dt;
+    cop.holdTimer = 0;
+  } else {
+    cop.holdTimer += dt;
+    if (cop.holdTimer > CONFIG.arrestHoldSeconds) {
+      world.state = 'busted';
+      toast(world, 'Ditangkap polisi!');
+    }
+  }
+  resolveBuildings(world, cop, 14);
+  clampToMap(cop, 14);
+}
+
+/** A cruiser drives at the player and rams; touch on foot means arrest. */
+function updateCruiser(world, cruiser, pos, dt) {
+  const d = dist(cruiser.x, cruiser.y, pos.x, pos.y);
+  const want = angleTo(cruiser.x, cruiser.y, pos.x, pos.y);
+  let turn = want - cruiser.angle;
+  while (turn > Math.PI) turn -= Math.PI * 2;
+  while (turn <= -Math.PI) turn += Math.PI * 2;
+  cruiser.angle += Math.max(-2.8 * dt, Math.min(2.8 * dt, turn));
+  cruiser.speed += (cruiser.cruise - cruiser.speed) * Math.min(1, 1.4 * dt);
+  const oldX = cruiser.x;
+  const oldY = cruiser.y;
+  cruiser.x += Math.cos(cruiser.angle) * cruiser.speed * dt;
+  cruiser.y += Math.sin(cruiser.angle) * cruiser.speed * dt;
+  const r = cruiser.length * 0.42;
+  resolveBuildings(world, cruiser, r);
+  clampToMap(cruiser, r);
+  // Stuck on a building corner (the straight line to the player cuts a
+  // block): snap to the road axis that points most directly at the player,
+  // so the cruiser goes around the block instead of grinding the wall.
+  if (cruiser.speed > 60 && dist(cruiser.x, cruiser.y, oldX, oldY) < cruiser.speed * dt * 0.3) {
+    const dx = pos.x - cruiser.x;
+    const dy = pos.y - cruiser.y;
+    cruiser.angle = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : Math.PI) : (dy > 0 ? Math.PI / 2 : -Math.PI / 2);
+  }
+  if (d < 46) {
+    const p = world.player;
+    if (p.inCar) {
+      damageCar(world, p.inCar, CONFIG.cruiserRamDamage * dt * 2, false);
+      p.inCar.speed *= 0.96;
+    } else {
+      cruiser.holdTimer += dt;
+      if (cruiser.holdTimer > 0.8) {
+        world.state = 'busted';
+        toast(world, 'Ditangkap polisi!');
+      }
     }
   } else {
-    state.wantedTimer = 0;
+    cruiser.holdTimer = 0;
   }
-
-  const wantCops = state.wanted === 0 ? 0 : Math.min(6, state.wanted + 1);
-  const liveCops = state.cars.filter((c) => c.isCop && !c.dead).length;
-  if (liveCops < wantCops) {
-    const p = roadPointNear(state.rng, state.player.x, state.player.y, 500, 900);
-    const cop = createCar('police', p.x, p.y, 0, state.rng);
-    cop.isCop = true;
-    cop.isPlayer = false;
-    cop.targetSpeed = 0;
-    state.cars.push(cop);
-    state.audio.setSiren(true);
-  }
-  if (state.wanted === 0 && liveCops === 0) state.audio.setSiren(false);
-}
-
-export function updateCops(state, dt) {
-  const player = state.player;
-  const playerCar = state.playerCar;
-  const target = playerCar || player;
-  for (const cop of state.cars) {
-    if (!cop.isCop || cop.dead) continue;
-    const dx = target.x - cop.x;
-    const dy = target.y - cop.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const wantAngle = Math.atan2(dy, dx);
-    let diff = wantAngle - cop.angle;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    // Pursuit: steer hard, accelerate; reverse out when wedged on a wall.
-    if (cop.stuck > 0.7) {
-      cop.speed -= 300 * dt;
-      cop.angle -= diff * 2 * dt;
-      cop.stuck -= dt;
-      if (cop.speed < -120) cop.stuck = 0;
-    } else {
-      cop.angle += Math.max(-3.2 * dt, Math.min(3.2 * dt, diff * 3 * dt));
-      const accel = cop.spec.accel * (dist > 500 ? 1 : 0.85);
-      cop.speed = Math.min(cop.spec.maxSpeed, cop.speed + accel * dt);
-    }
-    const nx = cop.x + Math.cos(cop.angle) * cop.speed * dt;
-    const ny = cop.y + Math.sin(cop.angle) * cop.speed * dt;
-    const bx = cop.x; const by = cop.y;
-    // Cops slide along walls like every other car — they never drive through
-    // a building, they go around the block.
-    moveWithCollision(state.city, cop, nx, ny, 16);
-    if (Math.hypot(cop.x - bx, cop.y - by) < Math.abs(cop.speed) * dt * 0.3) {
-      cop.stuck += dt;
-      cop.speed *= 0.5;
-    }
-    // Ram the player's car; on foot, close in and make the arrest.
-    if (dist < 46) {
-      if (playerCar) {
-        playerCar.health -= 14 * dt;
-        playerCar.speed *= (1 - 0.6 * dt);
-        if (state.rng.chance(dt * 2)) {
-          state.effects.push({ kind: 'spark', x: cop.x, y: cop.y, t: 0, life: 0.3 });
-          state.audio.crash();
-        }
-        if (playerCar.health <= 0) {
-          playerCar.dead = true;
-          state.playerCar = null;
-          player.x = playerCar.x; player.y = playerCar.y;
-          player.health -= 25;
-        }
-      } else {
-        state.bustedTimer += dt;
-        if (state.bustedTimer > 1.4) {
-          state.screen = 'busted';
-          state.audio.busted();
-        }
-      }
-    } else {
-      state.bustedTimer = Math.max(0, state.bustedTimer - dt * 2);
-    }
-  }
-  // Foot cops join the chase from three stars up.
-  if (state.wanted >= 3) {
-    const footCops = state.footCops.filter((c) => !c.dead).length;
-    if (footCops < state.wanted - 1 && state.rng.chance(dt * 0.5)) {
-      const p = roadPointNear(state.rng, player.x, player.y, 260, 520);
-      state.footCops.push({ x: p.x, y: p.y, speed: 165, dead: false });
-    }
-  }
-  for (const cop of state.footCops) {
-    if (cop.dead) continue;
-    const dx = player.x - cop.x;
-    const dy = player.y - cop.y;
-    const d = Math.hypot(dx, dy) || 1;
-    cop.x += (dx / d) * cop.speed * dt;
-    cop.y += (dy / d) * cop.speed * dt;
-    if (!playerCar && d < 30) {
-      state.bustedTimer += dt;
-      if (state.bustedTimer > 1.4) {
-        state.screen = 'busted';
-        state.audio.busted();
-      }
-    }
-  }
-}
-
-export function clearWanted(state) {
-  state.wanted = 0;
-  state.wantedTimer = 0;
-  for (const car of state.cars) if (car.isCop) car.dead = true;
-  state.footCops.length = 0;
-  state.audio.setSiren(false);
 }

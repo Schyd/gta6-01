@@ -1,303 +1,263 @@
-// The HUD, the minimap and every menu screen, drawn on the same canvas in
-// screen space: wanted stars, cash, health, the mission objective, and the
-// title, pause, busted, wasted and finale screens.
-import { H_ROADS, V_ROADS, WORLD_H, WORLD_W } from './config.js';
-import { MISSIONS, missionObjective } from './missions.js';
-import { loadSave } from './world.js';
+// SOLMAR — Streets of the Sun
+// The HUD and the menus: health, money, wanted stars, the mission objective,
+// the weapon panel, the speed panel above the minimap, the minimap itself
+// with its SOLMAR BAY pill, toasts, and every full-screen menu.
 
-function panel(ctx, x, y, w, h, alpha = 0.72) {
-  ctx.fillStyle = `rgba(12,14,20,${alpha})`;
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(x, y, w, h);
+import { CONFIG } from './config.js';
+import { districtAt } from './city.js';
+import { playerPos } from './world.js';
+import { nearInteractable } from './player.js';
+import { currentWeapon } from './combat.js';
+import { wantedLabel } from './police.js';
+import { missionProgress } from './missions.js';
+
+/** Draw the in-play HUD over the game view. */
+export function drawHUD(ctx, world, viewW, viewH) {
+  const p = world.player;
+  // Health bar, top left.
+  ctx.fillStyle = 'rgba(10,10,16,0.55)';
+  roundRectFill(ctx, 16, 14, 230, 46, 8);
+  ctx.fillStyle = '#1c1c22';
+  ctx.fillRect(28, 26, 150, 14);
+  ctx.fillStyle = p.health > 35 ? '#5dc96a' : '#ff5a4a';
+  ctx.fillRect(28, 26, 150 * Math.max(0, p.health / CONFIG.playerHealth), 14);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`❤ ${Math.ceil(p.health)}`, 186, 38);
+  ctx.fillStyle = '#e8b93c';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText(`$${world.money}`, 28, 54);
+
+  // Wanted stars, top right, with a label.
+  const stars = '★'.repeat(world.wanted) + '☆'.repeat(CONFIG.maxWanted - world.wanted);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = world.wanted > 0 ? '#ff5a4a' : '#ffffff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText(stars, viewW - 16, 36);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '12px sans-serif';
+  ctx.fillText(wantedLabel(world), viewW - 16, 56);
+
+  // Mission objective, top centre, on a dark pill.
+  const objective = world.mission.objective;
+  ctx.font = 'bold 14px sans-serif';
+  const ow = Math.min(viewW - 40, ctx.measureText(objective).width + 36);
+  ctx.fillStyle = 'rgba(10,10,16,0.6)';
+  roundRectFill(ctx, (viewW - ow) / 2, 12, ow, 32, 16);
+  ctx.fillStyle = '#ffd27a';
+  ctx.textAlign = 'center';
+  ctx.fillText(objective, viewW / 2, 33);
+  // Mission timer, when one is running.
+  if (world.mission.timer > 0 && (world.mission.stage === 'courier' || world.mission.stage === 'getaway')) {
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText(`${Math.ceil(world.mission.timer)} dtk`, viewW / 2, 60);
+  }
+  // Mission counter under the objective pill.
+  ctx.fillStyle = '#b9b3a4';
+  ctx.font = '12px sans-serif';
+  ctx.fillText(missionProgress(world), viewW / 2, 78);
+
+  // Weapon panel, bottom left, about 300 pixels wide.
+  const weapon = currentWeapon(world);
+  ctx.fillStyle = 'rgba(10,10,16,0.55)';
+  roundRectFill(ctx, 16, viewH - 66, 300, 50, 8);
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillText(weapon.name, 28, viewH - 44);
+  ctx.fillStyle = '#ffd27a';
+  ctx.font = '13px sans-serif';
+  const ammoText = weapon.mag === 0 ? '∞ peluru' : (p.reloadTimer > 0 ? 'Mengisi ulang…' : `${p.ammo} / ${weapon.mag}`);
+  ctx.fillText(ammoText, 28, viewH - 26);
+  ctx.fillStyle = '#b9b3a4';
+  ctx.font = '12px sans-serif';
+  ctx.fillText(districtAt(world.city, p.x, p.y), 210, viewH - 26);
+
+  // Speed panel above the minimap, car name on its own line.
+  const mapSize = 190;
+  const mapX = viewW - mapSize - 16;
+  const mapY = viewH - mapSize - 16;
+  if (p.inCar) {
+    const speedKmh = Math.round(Math.abs(p.inCar.speed) * 0.36);
+    ctx.fillStyle = 'rgba(10,10,16,0.55)';
+    roundRectFill(ctx, mapX, mapY - 58, mapSize, 50, 8);
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(`${speedKmh} km/j`, mapX + mapSize / 2, mapY - 34);
+    ctx.fillStyle = '#ffd27a';
+    ctx.font = '13px sans-serif';
+    ctx.fillText(p.inCar.typeName, mapX + mapSize / 2, mapY - 14);
+  }
+
+  // Minimap.
+  drawMinimap(ctx, world, mapX, mapY, mapSize);
+
+  // Toasts, centre, each sized to its measured text.
+  ctx.textAlign = 'center';
+  let toastY = 96;
+  for (const toast of world.toasts) {
+    ctx.font = 'bold 14px sans-serif';
+    const tw = ctx.measureText(toast.text).width + 32;
+    ctx.fillStyle = 'rgba(10,10,16,0.65)';
+    roundRectFill(ctx, (viewW - tw) / 2, toastY, tw, 30, 15);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(toast.text, viewW / 2, toastY + 20);
+    toastY += 38;
+  }
+
+  // Interaction prompt above the weapon panel.
+  const prompt = nearInteractable(world);
+  if (prompt) {
+    ctx.font = 'bold 14px sans-serif';
+    const pw = ctx.measureText(prompt).width + 28;
+    ctx.fillStyle = 'rgba(232,185,60,0.9)';
+    roundRectFill(ctx, 16, viewH - 104, pw, 30, 15);
+    ctx.fillStyle = '#1c1c22';
+    ctx.textAlign = 'left';
+    ctx.fillText(prompt, 30, viewH - 84);
+  }
 }
 
-function drawMinimap(state, ctx) {
-  const w = 200; const h = 152;
-  const x = 18; const y = state.viewH - h - 18;
-  panel(ctx, x, y, w, h, 0.78);
-  const sx = w / WORLD_W;
-  const sy = h / WORLD_H;
+/** The minimap: roads, the player, police, the mission marker, and the pill. */
+function drawMinimap(ctx, world, x, y, size) {
+  const scale = size / CONFIG.worldWidth;
+  const pos = playerPos(world);
+  ctx.fillStyle = 'rgba(10,10,16,0.6)';
+  roundRectFill(ctx, x - 4, y - 4, size + 8, size + 8, 8);
   ctx.save();
   ctx.beginPath();
-  ctx.rect(x, y, w, h);
+  ctx.rect(x, y, size, size);
   ctx.clip();
-  ctx.fillStyle = '#2f8fb5';
-  ctx.fillRect(x, y + (WORLD_H - 90) * sy, w, 90 * sy);
-  ctx.fillStyle = '#e8cf9a';
-  ctx.fillRect(x, y + (WORLD_H - 210) * sy, w, 120 * sy);
-  ctx.strokeStyle = '#55504a';
-  ctx.lineWidth = 3;
-  for (const rx of V_ROADS) {
-    ctx.beginPath(); ctx.moveTo(x + rx * sx, y); ctx.lineTo(x + rx * sx, y + h); ctx.stroke();
-  }
-  for (const ry of H_ROADS) {
-    ctx.beginPath(); ctx.moveTo(x, y + ry * sy); ctx.lineTo(x + w, y + ry * sy); ctx.stroke();
-  }
-  // Shops.
-  for (const shop of state.city.shops) {
-    ctx.fillStyle = shop.kind === 'gun' ? '#ff5b5b' : shop.kind === 'clinic' ? '#fff' : '#7fd08a';
-    ctx.fillRect(x + shop.x * sx - 2, y + shop.y * sy - 2, 4, 4);
-  }
+  ctx.fillStyle = '#5d7a3e';
+  ctx.fillRect(x, y, size, size);
+  // Sea.
+  ctx.fillStyle = '#3f7f9e';
+  ctx.fillRect(x, y + 2180 * scale, size, size);
+  // Roads.
+  ctx.fillStyle = '#4c4a48';
+  for (const ax of world.city.avenues) ctx.fillRect(x + (ax - 70) * scale, y, 140 * scale, size);
+  for (const sy of world.city.streets) ctx.fillRect(x, y + (sy - 70) * scale, size, 140 * scale);
   // Mission marker.
-  const m = state.mission && state.mission.marker;
-  if (m) {
-    const pulse = 4 + Math.sin(state.time * 5) * 1.5;
-    ctx.fillStyle = '#ffd23a';
-    ctx.beginPath(); ctx.arc(x + m.x * sx, y + m.y * sy, pulse, 0, Math.PI * 2); ctx.fill();
+  if (world.mission.marker) {
+    ctx.fillStyle = '#e8b93c';
+    ctx.beginPath();
+    ctx.arc(x + world.mission.marker.x * scale, y + world.mission.marker.y * scale, 6, 0, Math.PI * 2);
+    ctx.fill();
   }
-  // Police as red dots, the player as a white arrow.
-  for (const car of state.cars) {
-    if (!car.isCop || car.dead) continue;
-    ctx.fillStyle = '#ff2d2d';
-    ctx.beginPath(); ctx.arc(x + car.x * sx, y + car.y * sy, 3, 0, Math.PI * 2); ctx.fill();
+  // Police blips.
+  ctx.fillStyle = '#2a6bff';
+  for (const cop of world.cops) {
+    ctx.beginPath();
+    ctx.arc(x + cop.x * scale, y + cop.y * scale, 3, 0, Math.PI * 2);
+    ctx.fill();
   }
-  const px = x + state.player.x * sx;
-  const py = y + state.player.y * sy;
-  ctx.save();
-  ctx.translate(px, py);
-  ctx.rotate(state.playerCar ? state.playerCar.angle : state.player.angle);
-  ctx.fillStyle = '#fff';
+  for (const cruiser of world.cruisers) {
+    ctx.beginPath();
+    ctx.arc(x + cruiser.x * scale, y + cruiser.y * scale, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Enemies.
+  ctx.fillStyle = '#ff5a4a';
+  for (const e of world.enemies) {
+    ctx.beginPath();
+    ctx.arc(x + e.x * scale, y + e.y * scale, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // The player, a white dot with a gold ring.
+  ctx.fillStyle = '#ffffff';
   ctx.beginPath();
-  ctx.moveTo(7, 0); ctx.lineTo(-5, -4.5); ctx.lineTo(-5, 4.5);
-  ctx.closePath(); ctx.fill();
+  ctx.arc(x + pos.x * scale, y + pos.y * scale, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#e8b93c';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x + pos.x * scale, y + pos.y * scale, 7, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.restore();
-  ctx.restore();
-  // SOLMAR BAY pill, inside the minimap at its top.
+  // SOLMAR BAY pill inside the minimap, bottom centre.
   ctx.font = 'bold 11px sans-serif';
   const label = 'SOLMAR BAY';
-  const lw = ctx.measureText(label).width;
-  ctx.fillStyle = 'rgba(12,14,20,0.72)';
+  const lw = ctx.measureText(label).width + 18;
+  ctx.fillStyle = 'rgba(232,185,60,0.92)';
+  roundRectFill(ctx, x + (size - lw) / 2, y + size - 24, lw, 18, 9);
+  ctx.fillStyle = '#1c1c22';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, x + size / 2, y + size - 11);
+}
+
+/** A filled rounded rectangle. */
+function roundRectFill(ctx, x, y, w, h, r) {
   ctx.beginPath();
-  ctx.roundRect(x + 6, y + 6, lw + 16, 20, 10);
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
   ctx.fill();
-  ctx.fillStyle = '#ffd23a';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillText(label, x + 14, y + 20);
 }
 
-// Speed and car readout, sitting right above the minimap so the driver
-// reads it at a glance. The car name gets its own line, the speed below it.
-function drawSpeedPanel(state, ctx) {
-  const car = state.playerCar;
-  if (!car) return;
-  const w = 200;
-  const x = 18;
-  const y = state.viewH - 152 - 18 - 62;
-  panel(ctx, x, y, w, 54);
-  ctx.fillStyle = '#ffd23a';
-  ctx.font = 'bold 13px sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillText(car.spec.name, x + 12, y + 20);
-  const kmh = Math.round(Math.abs(car.speed) * 0.36);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 20px sans-serif';
-  ctx.fillText(`${kmh} km/h`, x + 12, y + 44);
-  // Car health bar, right of the speed.
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.fillRect(x + 118, y + 34, 70, 8);
-  ctx.fillStyle = car.health > 40 ? '#7fd08a' : '#ff5b5b';
-  ctx.fillRect(x + 118, y + 34, 70 * (car.health / 100), 8);
-}
-
-function drawHud(state, ctx) {
-  const W = state.viewW;
-  const H = state.viewH;
-  // Mission objective, top left.
-  const mission = state.mission;
-  panel(ctx, 18, 16, 420, 64);
-  ctx.fillStyle = '#ffd23a';
-  ctx.font = 'bold 13px sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  const title = mission ? `${mission.def.name} — ${mission.def.giver}` : 'FREE ROAM';
-  ctx.fillText(title, 30, 38);
-  ctx.fillStyle = '#fff';
-  ctx.font = '13px sans-serif';
-  ctx.fillText(missionObjective(state).slice(0, 64), 30, 58);
-  // Wanted stars, cash, health — top right.
-  panel(ctx, W - 268, 16, 250, 64);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 15px sans-serif';
-  ctx.textAlign = 'left';
-  let stars = '';
-  for (let i = 0; i < 5; i++) stars += i < state.wanted ? '★' : '☆';
-  ctx.fillStyle = state.wanted > 0 ? '#ff5b5b' : '#8a8f98';
-  ctx.fillText(stars, W - 254, 40);
-  ctx.fillStyle = '#7fd08a';
-  ctx.font = 'bold 16px sans-serif';
-  ctx.fillText(`$${state.cash.toLocaleString('en-US')}`, W - 254, 64);
-  // Health bar.
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.fillRect(W - 132, 26, 100, 12);
-  ctx.fillStyle = state.player.health > 50 ? '#7fd08a' : state.player.health > 25 ? '#e8b93a' : '#ff5b5b';
-  ctx.fillRect(W - 132, 26, 100 * (state.player.health / 100), 12);
-  ctx.fillStyle = '#fff';
-  ctx.font = '11px sans-serif';
-  ctx.fillText(`${Math.ceil(state.player.health)} HP`, W - 132, 54);
-  // Weapon panel, bottom right — wide enough for the ammo line and the hint.
-  if (!state.playerCar) {
-    panel(ctx, W - 318, H - 66, 300, 48);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 15px sans-serif';
-    ctx.fillText(state.player.reload > 0 ? 'RELOADING…' : `AMMO ${state.player.ammo} / ${state.player.mag}`, W - 304, H - 38);
-    ctx.fillStyle = '#cfd6dd';
-    ctx.font = '11px sans-serif';
-    ctx.fillText('Click — shoot    R — reload', W - 304, H - 20);
-  }
-  // Controls hint, bottom centre, fading after the first seconds.
-  if (state.time < 14) {
-    ctx.fillStyle = `rgba(255,255,255,${Math.min(1, (14 - state.time) / 3) * 0.85})`;
+/** A full-screen menu: title, pause, busted, wasted or finale. */
+export function drawMenu(ctx, world, viewW, viewH, kind) {
+  ctx.fillStyle = 'rgba(20,10,4,0.72)';
+  ctx.fillRect(0, 0, viewW, viewH);
+  ctx.textAlign = 'center';
+  const cx = viewW / 2;
+  if (kind === 'title') {
+    ctx.fillStyle = '#e8b93c';
+    ctx.font = 'bold 64px sans-serif';
+    ctx.fillText('SOLMAR', cx, 210);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillText('STREETS OF THE SUN', cx, 250);
+    ctx.fillStyle = '#ffd27a';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Enam misi. Satu kota. Satu pengemudi yang mengambil alih jalanan.', cx, 300);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '15px sans-serif';
+    ctx.fillText('WASD / panah — bergerak dan mengemudi  •  Mouse — membidik  •  Klik — menembak', cx, 360);
+    ctx.fillText('E — naik / keluar mobil, toko  •  Enter — mulai misi  •  R — isi ulang  •  P — jeda', cx, 388);
+    ctx.fillStyle = '#e8b93c';
+    ctx.font = 'bold 20px sans-serif';
+    // The warmup ends on frame 150, an odd blink phase: show the prompt then.
+    const blink = Math.floor(world.frame / 30) % 2 === 1;
+    if (blink) ctx.fillText('— TEKAN ENTER UNTUK MULAI —', cx, 470);
+    ctx.fillStyle = '#b9b3a4';
     ctx.font = '13px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('WASD move / drive   •   E enter car & use shops   •   Mouse aim, Click shoot   •   R reload   •   Esc pause', W / 2, H - 24);
+    ctx.fillText('Game orisinal 2D. Semua aset digambar dan disintesis di dalam game.', cx, 540);
+  } else if (kind === 'paused') {
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 44px sans-serif';
+    ctx.fillText('JEDA', cx, 300);
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Tekan P untuk lanjut, atau R untuk mulai dari awal misi ini.', cx, 350);
+  } else if (kind === 'busted') {
+    ctx.fillStyle = '#2a6bff';
+    ctx.font = 'bold 56px sans-serif';
+    ctx.fillText('BUSTED!', cx, 300);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Polisi menangkapmu. Uang misi ini hangus, tapi kota tetap menunggumu.', cx, 350);
+    ctx.fillText('Tekan Enter untuk mencoba lagi.', cx, 384);
+  } else if (kind === 'wasted') {
+    ctx.fillStyle = '#ff5a4a';
+    ctx.font = 'bold 56px sans-serif';
+    ctx.fillText('WASTED', cx, 300);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Kamu tumbang di jalanan Solmar Bay.', cx, 350);
+    ctx.fillText('Tekan Enter untuk mencoba lagi.', cx, 384);
+  } else if (kind === 'finale') {
+    ctx.fillStyle = '#e8b93c';
+    ctx.font = 'bold 48px sans-serif';
+    ctx.fillText('SOLMAR MILIKMU', cx, 280);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '20px sans-serif';
+    ctx.fillText(`Enam misi selesai. Total penghasilan: $${world.totalEarned}.`, cx, 340);
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Kota ini sekarang mengenal namamu. Main lagi? Tekan Enter.', cx, 380);
   }
-  // Centre message banner, sized to the measured text.
-  if (state.messageT > 0) {
-    ctx.fillStyle = `rgba(12,14,20,${Math.min(0.85, state.messageT)})`;
-    const msg = state.message;
-    ctx.font = 'bold 17px sans-serif';
-    const w = ctx.measureText(msg).width + 44;
-    ctx.fillRect(W / 2 - w / 2, 96, w, 40);
-    ctx.fillStyle = '#ffd23a';
-    ctx.textAlign = 'center';
-    ctx.fillText(msg, W / 2, 122);
-    ctx.textAlign = 'left';
-  }
-  // Busted progress: a cop closing in shows the arrest bar.
-  if (state.bustedTimer > 0 && state.screen === 'play') {
-    ctx.fillStyle = 'rgba(12,14,20,0.8)';
-    ctx.fillRect(W / 2 - 130, H - 120, 260, 26);
-    ctx.fillStyle = '#ff5b5b';
-    ctx.fillRect(W / 2 - 126, H - 116, 252 * (state.bustedTimer / 1.4), 18);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 13px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('BUSTED — break away!', W / 2, H - 102);
-    ctx.textAlign = 'left';
-  }
-  drawSpeedPanel(state, ctx);
-  drawMinimap(state, ctx);
 }
-
-function bigTitle(ctx, W, text, y, size, color) {
-  ctx.font = `bold ${size}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillText(text, W / 2 + 3, y + 4);
-  ctx.fillStyle = color;
-  ctx.fillText(text, W / 2, y);
-  ctx.textAlign = 'left';
-}
-
-function drawTitle(state, ctx) {
-  const W = state.viewW; const H = state.viewH;
-  ctx.fillStyle = 'rgba(10,12,24,0.45)';
-  ctx.fillRect(0, 0, W, H);
-  bigTitle(ctx, W, 'SOLMAR', 190, 96, '#ffd23a');
-  ctx.font = 'bold 24px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#fff';
-  ctx.fillText('STREETS OF THE SUN', W / 2, 232);
-  ctx.font = '16px sans-serif';
-  ctx.fillStyle = '#e8e2d2';
-  ctx.fillText('An open-world crime story. Jax Marín drives for Madame Luz —', W / 2, 276);
-  ctx.fillText('steal cars, outrun the Solmar PD, and take the city from the Vipers.', W / 2, 300);
-  const save = loadSave();
-  const lines = [
-    'WASD — move / drive      E — enter car, use shops',
-    'Mouse — aim      Click — shoot      R — reload',
-    'Esc — pause      M — mute',
-  ];
-  ctx.font = '15px sans-serif';
-  ctx.fillStyle = '#cfd6dd';
-  lines.forEach((line, i) => ctx.fillText(line, W / 2, 360 + i * 26));
-  panel(ctx, W / 2 - 210, 470, 420, 58, 0.85);
-  ctx.fillStyle = '#ffd23a';
-  ctx.font = 'bold 22px sans-serif';
-  ctx.fillText(save && save.missionIndex > 0 ? 'ENTER — CONTINUE' : 'ENTER — START THE STORY', W / 2, 507);
-  if (save && save.missionIndex > 0) {
-    ctx.font = '14px sans-serif';
-    ctx.fillStyle = '#cfd6dd';
-    ctx.fillText(`Save: $${save.cash}  •  ${save.completed.length} mission${save.completed.length === 1 ? '' : 's'} done`, W / 2, 566);
-  }
-  ctx.font = '13px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.fillText('A work of fiction. Solmar Bay, its people and its cars are invented — no real city, gang or game is depicted.', W / 2, H - 30);
-  ctx.textAlign = 'left';
-}
-
-function drawPaused(state, ctx) {
-  const W = state.viewW; const H = state.viewH;
-  ctx.fillStyle = 'rgba(10,12,24,0.6)';
-  ctx.fillRect(0, 0, W, H);
-  bigTitle(ctx, W, 'PAUSED', 300, 64, '#fff');
-  ctx.font = '16px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#e8e2d2';
-  ctx.fillText('Esc — resume      Enter — restart from the title', W / 2, 360);
-  ctx.fillText(`Cash $${state.cash}  •  Missions done ${state.completed.length}/${MISSIONS.length}`, W / 2, 392);
-  ctx.textAlign = 'left';
-}
-
-function drawBusted(state, ctx) {
-  const W = state.viewW; const H = state.viewH;
-  ctx.fillStyle = 'rgba(20,10,30,0.72)';
-  ctx.fillRect(0, 0, W, H);
-  bigTitle(ctx, W, 'BUSTED', 300, 80, '#7db8ff');
-  ctx.font = '17px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#e8e2d2';
-  ctx.fillText(`The Solmar PD took you in. Fine: $${Math.min(state.cash, 250)} — the heat is gone, the story goes on.`, W / 2, 360);
-  ctx.fillStyle = '#ffd23a';
-  ctx.font = 'bold 20px sans-serif';
-  ctx.fillText('ENTER — BACK ON THE STREETS', W / 2, 420);
-  ctx.textAlign = 'left';
-}
-
-function drawWasted(state, ctx) {
-  const W = state.viewW; const H = state.viewH;
-  ctx.fillStyle = 'rgba(30,8,8,0.72)';
-  ctx.fillRect(0, 0, W, H);
-  bigTitle(ctx, W, 'WASTED', 300, 80, '#ff5b5b');
-  ctx.font = '17px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#e8e2d2';
-  ctx.fillText('Solmar Bay is not done with you yet. The clinic patched you up — the story goes on.', W / 2, 360);
-  ctx.fillStyle = '#ffd23a';
-  ctx.font = 'bold 20px sans-serif';
-  ctx.fillText('ENTER — BACK ON THE STREETS', W / 2, 420);
-  ctx.textAlign = 'left';
-}
-
-function drawFinale(state, ctx) {
-  const W = state.viewW; const H = state.viewH;
-  ctx.fillStyle = 'rgba(10,12,24,0.55)';
-  ctx.fillRect(0, 0, W, H);
-  bigTitle(ctx, W, 'KING OF SOLMAR', 250, 72, '#ffd23a');
-  ctx.font = '20px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#fff';
-  ctx.fillText('Viper is finished. The Vipers are finished. The city is yours, Jax.', W / 2, 310);
-  ctx.font = '16px sans-serif';
-  ctx.fillStyle = '#e8e2d2';
-  ctx.fillText(`All ${MISSIONS.length} missions complete  •  $${state.cash.toLocaleString('en-US')} in the pocket  •  ${state.stats.carsStolen} cars stolen`, W / 2, 352);
-  ctx.fillText('Thanks for playing SOLMAR — free roam continues, or start the story again.', W / 2, 384);
-  ctx.fillStyle = '#ffd23a';
-  ctx.font = 'bold 20px sans-serif';
-  ctx.fillText('ENTER — FREE ROAM', W / 2, 450);
-  ctx.textAlign = 'left';
-}
-
-export function drawScreen(state, ctx, screen) {
-  if (screen === 'title') drawTitle(state, ctx);
-  else if (screen === 'paused') drawPaused(state, ctx);
-  else if (screen === 'busted') drawBusted(state, ctx);
-  else if (screen === 'wasted') drawWasted(state, ctx);
-  else if (screen === 'finale') drawFinale(state, ctx);
-}
-
-export { drawHud };

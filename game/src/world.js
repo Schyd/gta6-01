@@ -1,169 +1,152 @@
-// The world: one state object, the fixed-step update that ties every system
-// together, and the save file.
-import { SAVE_KEY, STEP, WORLD_H, WORLD_W } from './config.js';
-import { createRandom } from './random.js';
-import { buildCity, randomRoadPoint } from './city.js';
-import { createAudio } from './audio.js';
-import { createCar, drivePlayerCar, spawnTraffic, updateTraffic } from './vehicles.js';
-import { spawnPedestrians, updatePeds } from './pedestrians.js';
-import { clearWanted, updateCops, updateWanted } from './police.js';
-import { updateBullets, updateEffects, updatePickups } from './combat.js';
-import { startMission, updateEnemyBullets, updateMission } from './missions.js';
-import { enterCar, exitCar, nearestCar, nearestShop, updatePlayerOnFoot, useShop } from './player.js';
-import { ACTION_ENTER, ACTION_RELOAD } from './input.js';
+// SOLMAR — Streets of the Sun
+// The world: one state object holding everything alive in the city, plus the
+// collision helpers every system shares. Nothing here draws or listens to
+// input; it only holds state and answers geometry questions.
 
+import { CONFIG } from './config.js';
+import { makeRng } from './random.js';
+import { buildCity } from './city.js';
+
+/** A fresh world for one play session, driven by a single seed. */
 export function createWorld(seed) {
-  const rng = createRandom(seed);
-  const city = buildCity(rng);
-  const audio = createAudio();
-  const state = {
-    seed, rng, city, audio,
+  const rng = makeRng(seed);
+  const city = buildCity();
+  return {
+    seed,
+    rng,
+    city,
+    frame: 0,
     time: 0,
-    screen: 'title',
-    viewW: 1280, viewH: 800,
-    camera: { x: 1500, y: 1150, zoom: 1 },
-    player: {
-      x: 1500, y: 1150, angle: 0, aimAngle: 0,
-      health: 100, ammo: 12, mag: 48, reload: 0, fireCooldown: 0,
-    },
-    playerCar: null,
-    cars: [], peds: [], footCops: [], gang: [],
-    bullets: [], pickups: [], effects: [],
-    cash: 150,
-    wanted: 0, wantedTimer: 0, bustedTimer: 0,
-    mission: null, missionIndex: 0, missionFailed: -1, completed: [],
-    message: '', messageT: 0,
-    stats: { carsStolen: 0, shotsFired: 0, missionsDone: 0 },
+    state: 'title',
     paused: false,
+    player: {
+      x: 1600, y: 1150, angle: 0, aimAngle: 0,
+      health: CONFIG.playerHealth, inCar: null,
+      weapon: 'pistol', ammo: 0, reloadTimer: 0, shootTimer: 0,
+      hurtFlash: 0,
+    },
+    cars: [],
+    traffic: [],
+    peds: [],
+    cops: [],
+    cruisers: [],
+    bullets: [],
+    enemies: [],
+    particles: [],
+    toasts: [],
+    crates: [],
+    money: CONFIG.startingMoney,
+    totalEarned: 0,
+    heat: 0,
+    wanted: 0,
+    unseenTimer: 0,
+    mission: {
+      index: 0, stage: 'idle', timer: 0,
+      targetsLeft: 0, wave: 0,
+      objective: 'Tekan Enter untuk mulai misi pertama.',
+      marker: null,
+    },
+    completed: false,
+    camera: { x: 1600, y: 1150 },
+    mouse: { x: 0, y: 0, down: false },
+    stats: { shotsFired: 0, carsStolen: 0, missionsDone: 0 },
   };
-  // Jax starts on foot downtown, next to a parked sedan he can take.
-  const start = createCar('sedan', 1500, 1080, Math.PI / 2, rng);
-  start.targetSpeed = 0;
-  state.cars.push(start);
-  spawnTraffic(state, 14);
-  spawnPedestrians(state, 26);
-  return state;
 }
 
-export function resetRun(state) {
-  const fresh = createWorld(state.seed);
-  for (const key of Object.keys(fresh)) state[key] = fresh[key];
+/** True when a circle overlaps an axis-aligned rectangle. */
+export function circleRectOverlap(cx, cy, r, rect) {
+  const nx = Math.max(rect.x, Math.min(cx, rect.x + rect.w));
+  const ny = Math.max(rect.y, Math.min(cy, rect.y + rect.h));
+  const dx = cx - nx;
+  const dy = cy - ny;
+  return dx * dx + dy * dy < r * r;
 }
 
-export function saveGame(state) {
-  try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify({
-      cash: state.cash, missionIndex: state.missionIndex,
-      completed: state.completed, health: state.player.health,
-      ammo: state.player.ammo, mag: state.player.mag,
-    }));
-  } catch { /* storage off: the run lasts this visit only */ }
+/** True when a point sits inside a rectangle (edges inclusive). */
+export function pointInRect(x, y, rect) {
+  return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
 }
 
-export function loadSave() {
-  try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+/** True when two rectangles overlap. */
+export function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-export function applySave(state, save) {
-  state.cash = save.cash ?? 150;
-  state.missionIndex = save.missionIndex ?? 0;
-  state.completed = save.completed ?? [];
-  state.player.health = save.health ?? 100;
-  state.player.ammo = save.ammo ?? 12;
-  state.player.mag = save.mag ?? 48;
-}
-
-function updateCamera(state, dt) {
-  const target = state.playerCar || state.player;
-  const wantZoom = state.playerCar ? 0.82 : 1;
-  state.camera.zoom += (wantZoom - state.camera.zoom) * Math.min(1, 2 * dt);
-  state.camera.x += (target.x - state.camera.x) * Math.min(1, 5 * dt);
-  state.camera.y += (target.y - state.camera.y) * Math.min(1, 5 * dt);
-  const vw = state.viewW / 2 / state.camera.zoom;
-  const vh = state.viewH / 2 / state.camera.zoom;
-  state.camera.x = Math.max(vw - 100, Math.min(WORLD_W - vw + 100, state.camera.x));
-  state.camera.y = Math.max(vh - 100, Math.min(WORLD_H - vh + 100, state.camera.y));
-}
-
-export function stepWorld(state, input, dt, actions = null) {
-  state.time += dt;
-  if (state.messageT > 0) state.messageT -= dt;
-
-  // One edge-triggered action set per frame, handed in by the caller: the
-  // menu handler reads the same set, so the world must not read it again.
-  if (actions === null) actions = input.takeActions();
-  if (actions & ACTION_ENTER) {
-    if (state.playerCar) exitCar(state);
-    else {
-      const car = nearestCar(state, 64);
-      if (car) {
-        enterCar(state, car);
-        state.stats.carsStolen += 1;
-      } else {
-        const shop = nearestShop(state, 70);
-        if (shop) useShop(state, shop);
-      }
-    }
+/** True when a circle at (x, y) is blocked: a building, the sea, or the map edge. */
+export function isBlocked(world, x, y, r) {
+  if (x < r || y < r || x > CONFIG.worldWidth - r || y > CONFIG.worldHeight - r) return true;
+  if (y > 2180 + 40) return true;
+  for (const b of world.city.buildings) {
+    if (circleRectOverlap(x, y, r, b)) return true;
   }
-  if (actions & ACTION_RELOAD) {
-    const p = state.player;
-    if (!state.playerCar && p.ammo < 12 && p.mag > 0 && p.reload <= 0) p.reload = 1.1;
-  }
-
-  if (state.playerCar) {
-    drivePlayerCar(state, state.playerCar, input, dt);
-    state.player.x = state.playerCar.x;
-    state.player.y = state.playerCar.y;
-    if (state.playerCar.health <= 0) {
-      state.playerCar.dead = true;
-      state.effects.push({ kind: 'smoke', x: state.playerCar.x, y: state.playerCar.y, t: 0, life: 1.4 });
-      state.playerCar = null;
-      state.player.health -= 20;
-    }
-  } else {
-    updatePlayerOnFoot(state, input, dt);
-    state.audio.setEngine(0, false);
-  }
-
-  updateTraffic(state, dt);
-  updatePeds(state, dt);
-  updateWanted(state, dt);
-  updateCops(state, dt);
-  updateBullets(state, dt);
-  updateEnemyBullets(state, dt);
-  updatePickups(state, dt);
-  updateEffects(state, dt);
-  updateMission(state, dt);
-
-  // The player's car takes damage from hard hits; the player takes it on foot.
-  if (state.player.health <= 0 && state.screen === 'play') {
-    state.screen = 'wasted';
-    state.audio.fail();
-  }
-
-  // Keep traffic topped up near the player.
-  const liveTraffic = state.cars.filter((c) => !c.isPlayer && !c.isCop && !c.dead).length;
-  if (liveTraffic < 12) spawnTraffic(state, 1);
-
-  updateCamera(state, dt);
-  saveGame(state);
-
-  // The next mission (or a retry after a failure) starts by itself shortly
-  // after the last one ends, so the story keeps moving without a menu dive.
-  if (!state.mission && state.missionIndex < 6 && state.screen === 'play') {
-    state.nextMissionIn = (state.nextMissionIn ?? 3) - dt;
-    if (state.nextMissionIn <= 0) {
-      state.nextMissionIn = 3;
-      startMission(state, state.missionIndex);
-    }
-  }
+  return false;
 }
 
-export function startFreeRoam(state) {
-  state.screen = 'play';
+/**
+ * Push a circular entity out of every building it overlaps. Moves the entity
+ * to the nearest free edge and returns true when anything collided.
+ */
+export function resolveBuildings(world, ent, r) {
+  let hit = false;
+  for (const b of world.city.buildings) {
+    if (!circleRectOverlap(ent.x, ent.y, r, b)) continue;
+    hit = true;
+    const left = ent.x - (b.x - r);
+    const right = (b.x + b.w + r) - ent.x;
+    const top = ent.y - (b.y - r);
+    const bottom = (b.y + b.h + r) - ent.y;
+    const m = Math.min(left, right, top, bottom);
+    if (m === left) ent.x = b.x - r;
+    else if (m === right) ent.x = b.x + b.w + r;
+    else if (m === top) ent.y = b.y - r;
+    else ent.y = b.y + b.h + r;
+  }
+  return hit;
 }
 
-export { STEP };
+/** Clamp an entity inside the map bounds (walls, not the sea: the beach is open). */
+export function clampToMap(ent, r) {
+  ent.x = Math.max(r, Math.min(CONFIG.worldWidth - r, ent.x));
+  ent.y = Math.max(r, Math.min(CONFIG.worldHeight - r, ent.y));
+}
+
+/** Keep the camera centred on a point while staying inside the map. */
+export function clampCamera(camera, focusX, focusY, viewW, viewH) {
+  const hw = viewW / 2;
+  const hh = viewH / 2;
+  camera.x = Math.max(hw, Math.min(CONFIG.worldWidth - hw, focusX));
+  camera.y = Math.max(hh, Math.min(CONFIG.worldHeight - hh, focusY));
+}
+
+/** Distance between two points. */
+export function dist(ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/** Angle from (ax, ay) to (bx, by). */
+export function angleTo(ax, ay, bx, by) {
+  return Math.atan2(by - ay, bx - ax);
+}
+
+/** Smallest signed turn from angle a to angle b, in (-PI, PI]. */
+export function angleDelta(a, b) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d <= -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+/** A toast message on screen for a few seconds. */
+export function toast(world, text, seconds = 3) {
+  world.toasts.push({ text, left: seconds });
+  if (world.toasts.length > 4) world.toasts.shift();
+}
+
+/** The player's position, on foot or in a car. */
+export function playerPos(world) {
+  const p = world.player;
+  if (p.inCar) return { x: p.inCar.x, y: p.inCar.y };
+  return { x: p.x, y: p.y };
+}

@@ -1,281 +1,220 @@
-// Missions: the story of Jax Marín, getaway driver for the fixer Madame Luz,
-// against the Viper gang. Each mission is a chain of steps; the HUD points at
-// the current one and the city reacts to it.
-import { H_ROADS, V_ROADS } from './config.js';
-import { randomRoadPoint } from './city.js';
-import { spawnParkedCar } from './vehicles.js';
-import { raiseWanted } from './police.js';
+// SOLMAR — Streets of the Sun
+// Missions: six sequential story jobs with objectives, markers, timers and
+// rewards. Each mission is a small state machine; finishing one pays out and
+// unlocks the next.
 
-export const MISSIONS = [
-  {
-    id: 1, name: 'First Job', giver: 'Madame Luz',
-    brief: 'Steal the red Falco GT parked downtown and bring it to the garage.',
-    reward: 500,
-    steps: [
-      { type: 'steal', text: 'Steal the red Falco GT', target: 'falco' },
-      { type: 'deliver', text: 'Deliver the Falco to the garage', target: 'garage' },
-    ],
-  },
-  {
-    id: 2, name: 'The Pickup', giver: 'Madame Luz',
-    brief: 'Pick up the courier at the harbour and get him across town in 90 seconds.',
-    reward: 800,
-    steps: [
-      { type: 'goto', text: 'Pick up the courier at the harbour', target: 'harbour', radius: 70 },
-      { type: 'timed', text: 'Drive the courier to the rooftop bar — fast!', target: 'bar', time: 90, radius: 70 },
-    ],
-  },
-  {
-    id: 3, name: 'Harbour Lights', giver: 'Madame Luz',
-    brief: 'Six crates came in on the night boat. Collect them all, then bring them to the warehouse.',
-    reward: 600,
-    steps: [
-      { type: 'collect', text: 'Collect the crates at the harbour (0/6)', target: 'crates', count: 6 },
-      { type: 'deliver', text: 'Deliver the crates to the warehouse', target: 'warehouse' },
-    ],
-  },
-  {
-    id: 4, name: 'Viper Nest', giver: 'Madame Luz',
-    brief: 'The Vipers torched one of our cars. Wipe out eight of them in the Barrio.',
-    reward: 1200,
-    steps: [
-      { type: 'eliminate', text: 'Take out the Vipers in the Barrio (0/8)', target: 'barrio', count: 8 },
-      { type: 'escape', text: 'Lose the heat — get your wanted level to zero', target: 'escape' },
-    ],
-  },
-  {
-    id: 5, name: 'The Getaway', giver: 'Madame Luz',
-    brief: 'The bank job went loud. Three stars and the whole Solmar PD is on you — reach the safehouse in 90 seconds.',
-    reward: 1500,
-    steps: [
-      { type: 'chase', text: 'Outrun the police — reach the safehouse', target: 'safehouse', time: 90 },
-    ],
-  },
-  {
-    id: 6, name: 'King of Solmar', giver: 'Madame Luz',
-    brief: 'Viper himself is at the mansion. Take the hill in three waves, end it, and the city is yours.',
-    reward: 5000,
-    steps: [
-      { type: 'goto', text: 'Drive up to the mansion hill', target: 'mansion', radius: 90 },
-      { type: 'waves', text: 'Clear the mansion — wave 1 of 3', target: 'mansion', waves: [3, 4, 3] },
-    ],
-  },
-];
+import { CONFIG } from './config.js';
+import { dist, toast, playerPos } from './world.js';
+import { spawnEnemy } from './combat.js';
 
-const POINTS = {
-  garage: { x: 2300, y: 550 },
-  harbour: { x: 2900, y: 1750 },
-  bar: { x: 700, y: 250 },
-  warehouse: { x: 1100, y: 1450 },
-  barrio: { x: 700, y: 1450 },
-  safehouse: null, // from the city
-  mansion: { x: 2700, y: 250 },
-};
+/** A short progress line for the HUD and the debug handle. */
+export function missionProgress(world) {
+  const m = world.mission;
+  if (world.completed) return 'Semua misi selesai';
+  if (m.stage === 'idle') return `Misi ${m.index + 1} dari ${CONFIG.missions.length} — siap dimulai`;
+  const left = m.targetsLeft > 0 ? ` — sisa ${m.targetsLeft}` : '';
+  return `Misi ${m.index + 1} dari ${CONFIG.missions.length}${left}`;
+}
 
-export function startMission(state, index) {
-  const def = MISSIONS[index];
+/** Begin a mission by index, setting its stage, marker and objective. */
+export function startMission(world, index) {
+  const m = world.mission;
+  const def = CONFIG.missions[index];
   if (!def) return;
-  state.missionIndex = index;
-  state.mission = { def, step: 0, timer: 0, collected: 0, eliminated: 0, falco: null, crates: [], wave: 0, waveSpawned: 0 };
-  state.message = `${def.name} — ${def.brief}`;
-  state.messageT = 5;
-  setupStep(state);
+  m.index = index;
+  m.timer = 0;
+  m.targetsLeft = 0;
+  m.wave = 0;
+  const spots = world.city.missionSpots;
+  if (index === 0) {
+    m.stage = 'steal';
+    m.objective = 'Curi Falco GT emas, lalu bawa ke garasi.';
+    m.marker = { x: spots.falco.x, y: spots.falco.y };
+  } else if (index === 1) {
+    m.stage = 'courier';
+    m.checkpoints = spots.courier.slice();
+    m.checkpointIndex = 0;
+    m.timer = CONFIG.courierSeconds;
+    m.objective = 'Antar 3 paket sebelum waktu habis!';
+    m.marker = { x: spots.courier[0].x, y: spots.courier[0].y };
+  } else if (index === 2) {
+    m.stage = 'crates';
+    world.crates = spots.crates.map((c) => ({ x: c.x, y: c.y, taken: false }));
+    m.targetsLeft = CONFIG.cratesToCollect;
+    m.objective = `Kumpulkan ${CONFIG.cratesToCollect} peti di seluruh kota.`;
+    m.marker = { x: spots.crates[0].x, y: spots.crates[0].y };
+  } else if (index === 3) {
+    m.stage = 'clear';
+    m.targetsLeft = CONFIG.vipersToClear;
+    spawnTurfVipers(world);
+    m.objective = `Bersihkan ${CONFIG.vipersToClear} Viper dari turf.`;
+    m.marker = { x: spots.turf.x, y: spots.turf.y };
+  } else if (index === 4) {
+    m.stage = 'getaway';
+    world.heat = CONFIG.getawayStars;
+    world.wanted = CONFIG.getawayStars;
+    m.timer = CONFIG.getawaySeconds;
+    m.objective = `Bertahan ${CONFIG.getawaySeconds} detik dengan ${CONFIG.getawayStars} bintang!`;
+    m.marker = null;
+  } else if (index === 5) {
+    m.stage = 'finale';
+    m.wave = 1;
+    m.targetsLeft = CONFIG.finaleWaves[0];
+    spawnFinaleWave(world, CONFIG.finaleWaves[0], false);
+    m.objective = 'Finale mansion — gelombang 1 dari 3.';
+    m.marker = { x: spots.mansion.x, y: spots.mansion.y };
+  }
+  toast(world, `Misi ${index + 1}: ${def.title} — $${def.reward}`, 4);
 }
 
-function spawnWave(state) {
-  const m = state.mission;
-  const step = m.def.steps[m.step];
-  const base = POINTS.mansion;
-  const count = step.waves[m.wave];
-  const isLast = m.wave === step.waves.length - 1;
+/** Eight rivals posted around the turf circle. */
+function spawnTurfVipers(world) {
+  const spots = world.city.missionSpots.turf;
+  for (let i = 0; i < CONFIG.vipersToClear; i++) {
+    const a = (i / CONFIG.vipersToClear) * Math.PI * 2;
+    const r = 60 + world.rng() * 200;
+    spawnEnemy(world, spots.x + Math.cos(a) * r, spots.y + Math.sin(a) * r, false);
+  }
+}
+
+/** One finale wave: grunts, or the boss after the third wave. */
+function spawnFinaleWave(world, count, boss) {
+  const spots = world.city.missionSpots.mansion;
+  if (boss) {
+    spawnEnemy(world, spots.x, spots.y - 60, true);
+    return;
+  }
   for (let i = 0; i < count; i++) {
-    const boss = isLast && i === 0;
-    state.gang.push({
-      x: base.x + state.rng.range(-170, 170),
-      y: base.y + state.rng.range(-130, 130),
-      health: boss ? 220 : 100, dead: false,
-      shootT: state.rng.range(1, 3), boss,
-    });
+    const a = (i / count) * Math.PI * 2 + world.rng();
+    spawnEnemy(world, spots.x + Math.cos(a) * 180, spots.y + Math.sin(a) * 140, false);
   }
-  m.waveSpawned += count;
-  m.marker = { x: base.x, y: base.y };
 }
 
-function setupStep(state) {
-  const m = state.mission;
-  const step = m.def.steps[m.step];
-  m.timer = step.time || 0;
-  if (step.type === 'steal') {
-    m.falco = spawnParkedCar(state, 'sports', 1500, 1150, Math.PI / 2);
-    m.falco.color = '#c23b3b';
-    m.marker = { x: 1500, y: 1150 };
-  } else if (step.type === 'collect') {
-    m.crates = [];
-    for (let i = 0; i < step.count; i++) {
-      m.crates.push({ x: 2820 + (i % 3) * 90, y: 1640 + Math.floor(i / 3) * 90, taken: false });
+/** One step of the active mission. */
+export function updateMission(world, dt) {
+  const m = world.mission;
+  if (m.stage === 'idle' || m.stage === 'done' || world.completed) return;
+  const pos = playerPos(world);
+
+  if (m.stage === 'steal') {
+    const inFalco = world.player.inCar === world.falcoCar;
+    if (inFalco) {
+      m.objective = 'Bawa Falco GT ke garasi!';
+      m.marker = { x: world.city.shops.garage.x, y: world.city.shops.garage.y };
+      if (dist(pos.x, pos.y, m.marker.x, m.marker.y) < 90) completeMission(world);
     }
-    m.marker = { x: 2910, y: 1685 };
-  } else if (step.type === 'eliminate') {
-    state.gang.length = 0;
-    const base = step.target === 'mansion' ? POINTS.mansion : POINTS.barrio;
-    for (let i = 0; i < step.count; i++) {
-      state.gang.push({
-        x: base.x + state.rng.range(-160, 160),
-        y: base.y + state.rng.range(-120, 120),
-        health: 100, dead: false, shootT: state.rng.range(1, 3),
-      });
-    }
-    m.marker = { x: base.x, y: base.y };
-  } else if (step.type === 'waves') {
-    state.gang.length = 0;
-    m.wave = 0;
-    m.waveSpawned = 0;
-    spawnWave(state);
-  } else if (step.type === 'chase') {
-    raiseWanted(state, 3);
-    m.marker = { x: state.city.safehouse.x, y: state.city.safehouse.y };
-  } else if (step.type === 'escape') {
-    m.marker = { x: state.player.x, y: state.player.y };
-  } else {
-    const p = step.target === 'safehouse' ? state.city.safehouse : POINTS[step.target];
-    m.marker = { x: p.x, y: p.y };
-  }
-}
-
-export function missionObjective(state) {
-  if (!state.mission) return state.missionIndex >= MISSIONS.length ? 'Story complete — free roam' : 'Visit Madame Luz (L)';
-  const step = state.mission.def.steps[state.mission.step];
-  let text = step.text;
-  if (step.type === 'collect') text = `Collect the crates at the harbour (${state.mission.collected}/${step.count})`;
-  if (step.type === 'eliminate') text = `${step.text.split('(')[0]}(${state.mission.eliminated}/${step.count})`;
-  if (step.type === 'waves') {
-    const total = step.waves.reduce((a, b) => a + b, 0);
-    const done = state.gang.filter((g) => g.dead).length;
-    text = `Clear the mansion — wave ${state.mission.wave + 1} of ${step.waves.length} (${done}/${total} down)`;
-  }
-  if (state.mission.timer > 0) text += ` — ${Math.ceil(state.mission.timer)}s`;
-  return text;
-}
-
-function completeStep(state) {
-  const m = state.mission;
-  m.step += 1;
-  state.audio.pickup();
-  if (m.step >= m.def.steps.length) {
-    state.cash += m.def.reward;
-    state.completed.push(m.def.id);
-    state.message = `Mission complete: ${m.def.name} — +$${m.def.reward}`;
-    state.messageT = 4;
-    state.audio.jingle();
-    state.mission = null;
-    state.missionIndex += 1;
-    state.nextMissionIn = 3;
-    if (state.missionIndex >= MISSIONS.length) {
-      state.screen = 'finale';
-      state.audio.jingle();
-    }
-  } else {
-    setupStep(state);
-  }
-}
-
-function failMission(state, why) {
-  state.message = `Mission failed: ${why}`;
-  state.messageT = 4;
-  state.audio.fail();
-  state.mission = null;
-  state.missionFailed = state.missionIndex;
-  state.nextMissionIn = 3;
-}
-
-export function updateMission(state, dt) {
-  const m = state.mission;
-  if (!m) return;
-  const step = m.def.steps[m.step];
-  const player = state.player;
-  const px = player.x; const py = player.y;
-
-  if (m.timer > 0) {
+  } else if (m.stage === 'courier') {
     m.timer -= dt;
-    if (m.timer <= 0) { failMission(state, 'Out of time'); return; }
-  }
-
-  if (step.type === 'steal') {
-    if (state.playerCar === m.falco) completeStep(state);
-  } else if (step.type === 'goto' || step.type === 'timed' || step.type === 'deliver' || step.type === 'chase') {
-    const target = step.type === 'chase' ? state.city.safehouse : (step.target === 'safehouse' ? state.city.safehouse : POINTS[step.target]);
-    const radius = step.radius || 80;
-    if (Math.hypot(px - target.x, py - target.y) < radius) {
-      if (step.type === 'chase' && state.wanted > 0) {
-        state.message = 'Lose the cops first — then slip into the safehouse';
-        state.messageT = 2;
+    const cp = m.checkpoints[m.checkpointIndex];
+    if (cp && dist(pos.x, pos.y, cp.x, cp.y) < 80) {
+      m.checkpointIndex += 1;
+      toast(world, `Paket ${m.checkpointIndex} dari 3 terkirim!`);
+      if (m.checkpointIndex >= m.checkpoints.length) {
+        completeMission(world);
         return;
       }
-      completeStep(state);
+      m.marker = { x: m.checkpoints[m.checkpointIndex].x, y: m.checkpoints[m.checkpointIndex].y };
     }
-  } else if (step.type === 'collect') {
-    for (const c of m.crates) {
-      if (!c.taken && Math.hypot(px - c.x, py - c.y) < 40) {
-        c.taken = true;
-        m.collected += 1;
-        state.audio.pickup();
+    if (m.timer <= 0) failMission(world, 'Waktu habis! Paket terlambat.');
+  } else if (m.stage === 'crates') {
+    for (const crate of world.crates) {
+      if (!crate.taken && dist(pos.x, pos.y, crate.x, crate.y) < 46) {
+        crate.taken = true;
+        m.targetsLeft -= 1;
+        toast(world, `Peti didapat! Sisa ${m.targetsLeft}.`);
+        const next = world.crates.find((c) => !c.taken);
+        m.marker = next ? { x: next.x, y: next.y } : null;
       }
     }
-    if (m.collected >= step.count) completeStep(state);
-  } else if (step.type === 'eliminate') {
-    m.eliminated = state.gang.filter((g) => g.dead).length;
-    if (m.eliminated >= step.count) completeStep(state);
-  } else if (step.type === 'waves') {
-    const dead = state.gang.filter((g) => g.dead).length;
-    if (dead >= m.waveSpawned) {
-      if (m.wave + 1 < step.waves.length) {
+    if (m.targetsLeft <= 0) completeMission(world);
+  } else if (m.stage === 'clear') {
+    if (m.targetsLeft <= 0) completeMission(world);
+  } else if (m.stage === 'getaway') {
+    m.timer -= dt;
+    m.objective = `Bertahan! Sisa ${Math.ceil(Math.max(0, m.timer))} detik.`;
+    if (m.timer <= 0) completeMission(world);
+  } else if (m.stage === 'finale') {
+    if (m.targetsLeft <= 0 && world.enemies.length === 0) {
+      if (m.wave < 3) {
         m.wave += 1;
-        state.message = `Wave ${m.wave + 1} — more guards coming!`;
-        state.messageT = 3;
-        state.audio.fail();
-        spawnWave(state);
+        m.targetsLeft = CONFIG.finaleWaves[m.wave - 1];
+        spawnFinaleWave(world, m.targetsLeft, false);
+        m.objective = `Finale mansion — gelombang ${m.wave} dari 3.`;
+        toast(world, `Gelombang ${m.wave} datang!`);
+      } else if (m.wave === 3) {
+        m.wave = 4;
+        m.targetsLeft = 1;
+        spawnFinaleWave(world, 1, true);
+        m.objective = 'Bos Viper muncul! Kalahkan dia!';
+        toast(world, 'BOS VIPER MUNCUL!', 4);
       } else {
-        completeStep(state);
+        completeMission(world);
       }
-    }
-  } else if (step.type === 'escape') {
-    if (state.wanted === 0) completeStep(state);
-  }
-
-  // Gang members shoot back at the player.
-  for (const g of state.gang) {
-    if (g.dead) continue;
-    const d = Math.hypot(g.x - px, g.y - py);
-    if (d < 420) {
-      g.shootT -= dt;
-      if (g.shootT <= 0) {
-        g.shootT = 1.6 + state.rng.next();
-        const a = Math.atan2(py - g.y, px - g.x);
-        state.bullets.push({ x: g.x, y: g.y, vx: Math.cos(a) * 520, vy: Math.sin(a) * 520, life: 1.1, enemy: true });
-        state.effects.push({ kind: 'muzzle', x: g.x, y: g.y, t: 0, life: 0.08 });
-        state.audio.gunshot();
-      }
-      // They strafe slowly toward the player.
-      g.x += ((px - g.x) / (d || 1)) * 26 * dt;
-      g.y += ((py - g.y) / (d || 1)) * 26 * dt;
     }
   }
 }
 
-// Enemy bullets hurt the player (handled in world step via this helper).
-export function updateEnemyBullets(state, dt) {
-  const player = state.player;
-  for (const b of state.bullets) {
-    if (!b.enemy) continue;
-    if (Math.hypot(b.x - player.x, b.y - player.y) < 15) {
-      b.life = 0;
-      player.health -= 9;
-      state.effects.push({ kind: 'hit', x: player.x, y: player.y, t: 0, life: 0.4 });
-      if (player.health <= 0) state.screen = 'wasted';
-    }
+/** Pay out, advance, and save. The last mission completes the game. */
+function completeMission(world) {
+  const m = world.mission;
+  const def = CONFIG.missions[m.index];
+  world.money += def.reward;
+  world.totalEarned += def.reward;
+  world.stats.missionsDone += 1;
+  toast(world, `Misi selesai! +$${def.reward}.`, 4);
+  if (world.audio) world.audio.mission();
+  if (m.index + 1 >= CONFIG.missions.length) {
+    m.stage = 'done';
+    world.completed = true;
+    world.state = 'finale';
+    return;
+  }
+  m.stage = 'idle';
+  m.index += 1;
+  m.objective = `Tekan Enter untuk misi ${m.index + 1}: ${CONFIG.missions[m.index].title}.`;
+  m.marker = null;
+  saveGame(world);
+}
+
+/** A failed mission resets to idle so the player can retry. */
+function failMission(world, reason) {
+  const m = world.mission;
+  toast(world, `${reason} Tekan Enter untuk mencoba lagi.`, 4);
+  m.stage = 'idle';
+  m.objective = `Tekan Enter untuk mengulang misi ${m.index + 1}.`;
+  m.marker = null;
+}
+
+/** Save money and mission progress to the browser. */
+export function saveGame(world) {
+  try {
+    const data = {
+      money: world.money,
+      totalEarned: world.totalEarned,
+      nextMission: world.completed ? CONFIG.missions.length : world.mission.index,
+      missionsDone: world.stats.missionsDone,
+    };
+    localStorage.setItem(CONFIG.saveKey, JSON.stringify(data));
+  } catch (err) {
+    // Storage may be unavailable (private mode); the game plays on regardless.
   }
 }
 
-export function startNextMission(state) {
-  if (state.missionIndex < MISSIONS.length) startMission(state, state.missionIndex);
+/** Load a save, if one exists; returns true when something was loaded. */
+export function loadGame(world) {
+  try {
+    const raw = localStorage.getItem(CONFIG.saveKey);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    world.money = data.money || 0;
+    world.totalEarned = data.totalEarned || 0;
+    world.mission.index = Math.min(data.nextMission || 0, CONFIG.missions.length - 1);
+    world.stats.missionsDone = data.missionsDone || 0;
+    if (data.nextMission >= CONFIG.missions.length) {
+      world.completed = true;
+    }
+    return true;
+  } catch (err) {
+    return false;
+  }
 }

@@ -1,132 +1,91 @@
-// Deterministic screenshot staging: ?shot=start|play|chase|end (with &seed=N)
-// sets the world up as a still from the game, paints it twice and sets
-// window.__shotReady. The screenshots are real renders of the game's own code.
-import { createCar, spawnParkedCar } from './vehicles.js';
+// SOLMAR — Streets of the Sun
+// Screenshot poses: four deterministic scenes for the entry's images. Each
+// pose sets the world to a fixed state, then the game advances a fixed number
+// of steps so the render is identical every time it runs.
+
+import { CONFIG } from './config.js';
 import { startMission } from './missions.js';
-import { enterCar } from './player.js';
-import { clearWanted } from './police.js';
+import { spawnEnemy } from './combat.js';
+import { makeCar } from './vehicles.js';
 
-function placeTraffic(state, spots) {
-  // Clear the random traffic and put cars exactly where the shot needs them.
-  state.cars = state.cars.filter((c) => c.isPlayer);
-  const types = ['sedan', 'taxi', 'truck', 'van', 'muscle', 'sedan'];
-  spots.forEach((s, i) => {
-    const car = createCar(types[i % types.length], s.x, s.y, s.angle, state.rng);
-    car.targetSpeed = 150;
-    state.cars.push(car);
-  });
-}
+/** The four poses, in filename order. The first is the cover. */
+export const SHOT_NAMES = ['1-chase', '2-play', '3-start', '4-finale'];
 
-function putPlayerInSportsCar(state, x, y, angle) {
-  const car = spawnParkedCar(state, 'sports', x, y, angle);
-  car.color = '#c23b3b';
-  car.owned = true;
-  state.player.x = x;
-  state.player.y = y;
-  enterCar(state, car);
-  return car;
-}
-
-export function stageShot(name, state) {
-  if (name === 'start') {
-    state.screen = 'title';
-    state.camera.x = 1500;
-    state.camera.y = 1150;
-    state.camera.zoom = 0.62;
-    placeTraffic(state, [
-      { x: 1500, y: 850, angle: Math.PI / 2 },
-      { x: 1100, y: 1150, angle: 0 },
-      { x: 1900, y: 1150, angle: Math.PI },
-      { x: 1500, y: 1450, angle: -Math.PI / 2 },
-      { x: 700, y: 850, angle: Math.PI / 2 },
-    ]);
-    const car = spawnParkedCar(state, 'sports', 1560, 1210, Math.PI / 2);
-    car.color = '#c23b3b';
-    state.player.x = 1500;
-    state.player.y = 1150;
-    return 'title';
+/**
+ * Set the world to one pose. Poses place the player, cars, police and enemies
+ * at fixed spots and start the right mission, so the frame is composed.
+ */
+export function applyShot(world, name) {
+  if (!SHOT_NAMES.includes(name)) throw new Error(`unknown shot: ${name}`);
+  const city = world.city;
+  if (name === '3-start') {
+    world.state = 'title';
+    world.camera.x = 1600;
+    world.camera.y = 1150;
+    return;
   }
-
-  if (name === 'play') {
-    state.screen = 'play';
-    clearWanted(state);
-    startMission(state, 0);
-    // Step 1 (steal the Falco) is done by the staging: Jax already has it.
-    // Drop the staged Falco itself so it does not double up on the player's car.
-    state.cars = state.cars.filter((c) => c !== state.mission.falco);
-    state.mission.step = 1;
-    state.mission.marker = { x: 2300, y: 550 };
-    putPlayerInSportsCar(state, 1500, 1150, 0);
-    state.playerCar.speed = 320;
-    placeTraffic(state, [
-      { x: 1500, y: 850, angle: Math.PI / 2 },
-      { x: 1100, y: 1150, angle: 0 },
-      { x: 1900, y: 1150, angle: Math.PI },
-      { x: 1500, y: 1450, angle: -Math.PI / 2 },
-      { x: 700, y: 1150, angle: 0 },
-      { x: 2300, y: 850, angle: Math.PI / 2 },
-    ]);
-    // Keep the player's car in the traffic list (placeTraffic filtered it out).
-    if (!state.cars.includes(state.playerCar)) state.cars.push(state.playerCar);
-    state.camera.x = state.player.x;
-    state.camera.y = state.player.y;
-    state.camera.zoom = 0.85;
-    return 'play';
+  world.state = 'play';
+  if (name === '2-play') {
+    // On foot downtown, traffic and pedestrians around, mission one waiting.
+    world.player.x = 1600;
+    world.player.y = 1150;
+    world.player.aimAngle = -0.5;
+    world.camera.x = 1600;
+    world.camera.y = 1150;
+    startMission(world, 0);
+    return;
   }
-
-  if (name === 'chase') {
-    state.screen = 'play';
-    startMission(state, 4);
-    const car = putPlayerInSportsCar(state, 1500, 1150, 0);
-    car.speed = 380;
-    placeTraffic(state, [
-      { x: 1100, y: 1150, angle: 0 },
-      { x: 1900, y: 850, angle: Math.PI / 2 },
-    ]);
-    if (!state.cars.includes(state.playerCar)) state.cars.push(state.playerCar);
-    // Two interceptors tight on Jax's tail, lights flashing.
-    const cop1 = createCar('police', 1380, 1180, 0, state.rng);
-    cop1.isCop = true;
-    cop1.speed = 420;
-    const cop2 = createCar('police', 1330, 1120, 0, state.rng);
-    cop2.isCop = true;
-    cop2.speed = 400;
-    state.cars.push(cop1, cop2);
-    state.audio.setSiren(true);
-    state.camera.x = state.player.x;
-    state.camera.y = state.player.y;
-    state.camera.zoom = 0.85;
-    return 'play';
-  }
-
-  if (name === 'end') {
-    state.screen = 'finale';
-    state.cash = 12480;
-    state.completed = [1, 2, 3, 4, 5, 6];
-    state.stats.carsStolen = 23;
-    // The finale looks over downtown, where the city is densest.
-    state.camera.x = 1500;
-    state.camera.y = 1150;
-    state.camera.zoom = 0.62;
-    placeTraffic(state, [
-      { x: 1500, y: 850, angle: Math.PI / 2 },
-      { x: 1100, y: 1150, angle: 0 },
-      { x: 1900, y: 1150, angle: Math.PI },
-      { x: 1500, y: 1450, angle: -Math.PI / 2 },
-      { x: 700, y: 850, angle: Math.PI / 2 },
-    ]);
-    // Fireworks over downtown.
-    const colors = ['rgba(255,210,58,0.95)', 'rgba(255,90,90,0.95)', 'rgba(90,200,255,0.95)', 'rgba(140,255,140,0.95)'];
-    for (let i = 0; i < 8; i++) {
-      state.effects.push({
-        kind: 'firework',
-        x: 1500 + (i - 4) * 170 + (i % 2 ? 60 : -40),
-        y: 1150 - 260 - (i % 3) * 110,
-        t: 0, life: 2.2, color: colors[i % colors.length],
-      });
+  if (name === '1-chase') {
+    // The cover: the player in the Falco GT, wanted level three, cruisers on
+    // the tail, the minimap and the speed panel visible. The car starts
+    // far west on street 1250 so the warmup drive ends mid-city, clear of
+    // the map edge, with the cruisers right behind it on the same road.
+    const falco = world.falcoCar;
+    falco.x = 1200;
+    falco.y = 1250;
+    falco.angle = 0;
+    falco.speed = 520;
+    falco.vx = 520;
+    falco.vy = 0;
+    falco.driver = 'player';
+    world.player.inCar = falco;
+    world.player.x = falco.x;
+    world.player.y = falco.y;
+    world.heat = 3;
+    world.wanted = 3;
+    for (let i = 0; i < 2; i++) {
+      const cruiser = makeCar('komodo', 1200 - 180 - i * 120, 1250 + (i === 0 ? 40 : -40), 0, 'police');
+      cruiser.body = '#20242e';
+      cruiser.roof = '#20242e';
+      cruiser.cruise = CONFIG.cruiserTopSpeed;
+      cruiser.speed = 500;
+      cruiser.holdTimer = 0;
+      world.cruisers.push(cruiser);
     }
-    return 'finale';
+    world.mission.objective = 'Lari dari polisi — bawa Falco GT ke garasi!';
+    world.mission.marker = { x: city.shops.garage.x, y: city.shops.garage.y };
+    world.camera.x = 1200;
+    world.camera.y = 1250;
+    return;
   }
-
-  return 'title';
+  if (name === '4-finale') {
+    // The mansion finale: the player on foot among rivals, the boss in view.
+    world.player.x = 2650;
+    world.player.y = 520;
+    world.player.aimAngle = -Math.PI / 2;
+    world.camera.x = 2650;
+    world.camera.y = 420;
+    startMission(world, 5);
+    // Skip to the second wave so the frame is busy: clear the first wave's
+    // grunts, then place the second wave and the boss by hand.
+    world.enemies = [];
+    world.mission.wave = 2;
+    world.mission.targetsLeft = CONFIG.finaleWaves[1];
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + 0.4;
+      spawnEnemy(world, 2650 + Math.cos(a) * 170, 300 + Math.sin(a) * 120, false);
+    }
+    spawnEnemy(world, 2650, 240, true);
+    world.mission.objective = 'Finale mansion — gelombang 2 dari 3.';
+  }
 }
