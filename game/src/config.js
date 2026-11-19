@@ -1,88 +1,53 @@
-// config.js — SOLMAR: Streets of the Sun. All tunable constants in one place.
-// An original 2D top-down open-world crime game set in the fictional city
-// of Solmar Bay. No assets, names or trademarks from any commercial game.
-
+// SOLMAR — tuning, palette and world constants. One place for every number the
+// rest of the game balances against, so a tweak here retunes the whole city.
 export const WORLD_W = 3200;
 export const WORLD_H = 2400;
+export const ROAD_W = 72;
+export const BLOCK = 400;
 
-export const VIEW_W = 1280;
-export const VIEW_H = 800;
+// Vertical and horizontal road centre lines. The city is a grid; everything
+// else (buildings, parks, shops) lives in the blocks between these roads.
+export const V_ROADS = [300, 700, 1100, 1500, 1900, 2300, 2700];
+export const H_ROADS = [250, 550, 850, 1150, 1450, 1750, 2050];
 
-// Golden-hour palette (sun low in the west, long shadows to the east).
-export const PALETTE = {
-  grass: '#7fae5a',
-  grassDark: '#6f9c4e',
-  road: '#3c3f46',
-  roadLine: '#e8d27a',
-  sidewalk: '#9a938a',
-  sand: '#e3c98f',
-  water: '#2e7fa8',
-  waterDeep: '#256b8f',
-  parkGrass: '#69a854',
-  hill: '#8a9a6a',
-  buildingRoof: ['#b5674a', '#7a6f8f', '#4a7a8f', '#8f7a4a', '#6a8f6a', '#a85a6a'],
-  buildingEdge: '#00000033',
-};
-
-// Street grid: avenues run north-south, streets run east-west.
-export const AVENUES = [400, 1000, 1600, 2200, 2800];
-export const STREETS = [350, 800, 1250, 1700, 2150];
-export const ROAD_HALF = 45;
-
-// District rectangles (x, y, w, h).
-export const DISTRICTS = {
-  park: { x: 1045, y: 845, w: 510, h: 360, name: 'Solmar Park' },
-  beach: { x: 0, y: 2195, w: 3200, h: 205, name: 'Palmera Beach' },
-  harbor: { x: 2845, y: 395, w: 355, h: 360, name: 'Solmar Harbor' },
-  hill: { x: 0, y: 0, w: 355, h: 305, name: 'Mansion Hill' },
-  downtown: { x: 1450, y: 200, w: 900, h: 500, name: 'Downtown' },
-};
-
-// Fixed points of interest.
-export const POIS = {
-  garage: { x: 2350, y: 1650, name: 'Rico Garage' },
-  gunShop: { x: 950, y: 320, name: 'Ironworks Gun Shop' },
-  clinic: { x: 1650, y: 1750, name: 'Sunrise Clinic' },
-  sprayShop: { x: 550, y: 1300, name: 'Fresh Coat Spray Shop' },
-  mansion: { x: 180, y: 150, name: 'Villa Del Sol' },
-  falcoSpot: { x: 1750, y: 500, name: 'Falco GT' },
-  courierDrop: { x: 3050, y: 580, name: 'Harbor Drop' },
-};
-
-// Seven stealable car types.
-export const CAR_TYPES = [
-  { key: 'falco', name: 'Falco GT', color: '#c0272d', accel: 340, maxSpeed: 430, grip: 3.4, len: 52, wid: 26 },
-  { key: 'coupe', name: 'Lumen Coupe', color: '#2d6fc0', accel: 300, maxSpeed: 390, grip: 3.2, len: 50, wid: 25 },
-  { key: 'sedan', name: 'Marina Sedan', color: '#d8d8d8', accel: 240, maxSpeed: 320, grip: 3.0, len: 50, wid: 25 },
-  { key: 'taxi', name: 'Solmar Taxi', color: '#e8b400', accel: 230, maxSpeed: 310, grip: 3.0, len: 50, wid: 25 },
-  { key: 'pickup', name: 'Dune Pickup', color: '#7a4a21', accel: 250, maxSpeed: 330, grip: 2.9, len: 54, wid: 26 },
-  { key: 'van', name: 'Cargo Van', color: '#5a6a7a', accel: 190, maxSpeed: 270, grip: 2.7, len: 58, wid: 28 },
-  { key: 'truck', name: 'Haul Truck', color: '#3a5a3a', accel: 160, maxSpeed: 250, grip: 2.5, len: 66, wid: 30 },
-];
-
-export const WEAPONS = {
-  pistol: { name: 'Pistol', damage: 34, rate: 0.28, mag: 12, reload: 1.0, range: 520, spread: 0.03, price: 0, ammoPrice: 40 },
-  smg: { name: 'SMG', damage: 18, rate: 0.09, mag: 30, reload: 1.4, range: 460, spread: 0.07, price: 350, ammoPrice: 90 },
-  rifle: { name: 'Rifle', damage: 70, rate: 0.55, mag: 8, reload: 1.8, range: 640, spread: 0.01, price: 900, ammoPrice: 120 },
-};
-export const WEAPON_ORDER = ['pistol', 'smg', 'rifle'];
-
-export const MISSION_DEFS = [
-  { id: 1, name: 'Hot Wheels', brief: 'Steal the red Falco GT downtown and deliver it to Rico Garage.', reward: 500 },
-  { id: 2, name: 'Rush Hour', brief: 'Courier run: reach the Harbor Drop before the timer runs out.', reward: 800 },
-  { id: 3, name: 'Supply Run', brief: 'Collect 6 supply crates scattered around the park and downtown.', reward: 600 },
-  { id: 4, name: 'Park Cleanup', brief: 'Wipe out 8 Vipers hiding in Solmar Park.', reward: 1200 },
-  { id: 5, name: 'Heat Wave', brief: 'Survive 90 seconds at 3 stars. Do not get busted.', reward: 1500 },
-  { id: 6, name: 'King of Solmar', brief: 'Storm Villa Del Sol. Three waves guard the mansion.', reward: 5000 },
-];
-
-export const WANTED_MAX = 5;
-export const SPRAY_PRICE = 300;
-export const CLINIC_PRICE = 150;
+export const STEP = 1 / 60;
 export const SAVE_KEY = 'solmar-save-v1';
 
-export function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
-export function lerp(a, b, t) { return a + (b - a) * t; }
-export function dist2(ax, ay, bx, by) { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; }
-export function angleTo(ax, ay, bx, by) { return Math.atan2(by - ay, bx - ax); }
-export function angleDiff(a, b) { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; }
+// Sun-soaked golden-hour palette. Warm asphalt, pale sidewalks, terracotta
+// roofs and turquoise water: one coherent look across every screen.
+export const PALETTE = {
+  grass: '#7fae62',
+  grassDark: '#6f9d55',
+  sand: '#e8cf9a',
+  water: '#2f8fb5',
+  waterDeep: '#22708f',
+  asphalt: '#3d3a38',
+  asphaltLine: '#d8c95c',
+  sidewalk: '#b9ac93',
+  crosswalk: '#e8e2d2',
+  roofA: '#c96f4a',
+  roofB: '#b85c50',
+  roofC: '#8a6f8e',
+  roofD: '#5f7d6a',
+  roofE: '#d9a441',
+  roofEdge: 'rgba(0,0,0,0.25)',
+  park: '#69a854',
+  tree: '#3f7d3a',
+  treeLight: '#5da24e',
+};
+
+export const CAR_TYPES = {
+  sedan: { w: 46, h: 22, accel: 400, maxSpeed: 430, brake: 720, turn: 2.7, color: '#7d8aa0', name: 'Solano' },
+  taxi: { w: 46, h: 22, accel: 420, maxSpeed: 450, brake: 720, turn: 2.8, color: '#e8b93a', name: 'Cab' },
+  sports: { w: 48, h: 21, accel: 560, maxSpeed: 580, brake: 800, turn: 3.1, color: '#c23b3b', name: 'Falco GT' },
+  truck: { w: 58, h: 26, accel: 300, maxSpeed: 330, brake: 600, turn: 2.2, color: '#5b7d9c', name: 'Hauler' },
+  van: { w: 52, h: 24, accel: 340, maxSpeed: 360, brake: 650, turn: 2.4, color: '#8a8f98', name: 'Van' },
+  police: { w: 46, h: 22, accel: 520, maxSpeed: 540, brake: 800, turn: 3.0, color: '#22262e', name: 'Interceptor' },
+  muscle: { w: 48, h: 22, accel: 480, maxSpeed: 500, brake: 760, turn: 2.9, color: '#3f6d4e', name: 'Bravado' },
+};
+
+export const WANTED_DECAY_SECONDS = 26;
+export const SPRAY_COST = 300;
+export const AMMO_COST = 50;
+export const HEAL_COST = 100;
+export const BUSTED_FINE = 250;

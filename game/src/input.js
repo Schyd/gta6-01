@@ -1,66 +1,67 @@
-// input.js — keyboard and pointer input for SOLMAR. Held keys drive the
-// player and the car; one-shot presses (interact, switch weapon, reload,
-// pause, confirm) are queued as flags and taken once by the loop, so a press
-// between two frames is never lost and never counted twice. The mouse aims
-// and fires.
-
+// Keyboard and mouse input. Keys are held in a set; edge-triggered actions
+// (enter car, shoot, pause, confirm) are consumed once per press.
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
-export const ACTION_INTERACT = 4;
-export const ACTION_SWITCH = 8;
-export const ACTION_RELOAD = 16;
+export const ACTION_ENTER = 4;
+export const ACTION_RELOAD = 8;
+export const ACTION_MUTE = 16;
 
 export function createInput(canvas) {
   const keys = new Set();
-  let actions = 0;
-  let mouseX = 640;
-  let mouseY = 400;
-  let mouseDown = false;
+  const pressed = new Set();
+  const mouse = { x: 0, y: 0, down: false, clicked: false };
 
-  window.addEventListener('keydown', (event) => {
-    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
-      event.preventDefault();
-    }
-    if (event.repeat) return;
-    keys.add(event.code);
-    if (event.code === 'Enter' || event.code === 'Space') actions |= ACTION_CONFIRM;
-    else if (event.code === 'Escape' || event.code === 'KeyP') actions |= ACTION_PAUSE;
-    else if (event.code === 'KeyE') actions |= ACTION_INTERACT;
-    else if (event.code === 'KeyQ') actions |= ACTION_SWITCH;
-    else if (event.code === 'KeyR') actions |= ACTION_RELOAD;
+  function keyName(e) {
+    // Lowercase everything: 'Enter' -> 'enter', 'ArrowUp' -> 'arrowup',
+    // 'W' -> 'w', so the checks below match every keyboard layout.
+    return e.key.toLowerCase();
+  }
+
+  window.addEventListener('keydown', (e) => {
+    const k = keyName(e);
+    if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
+    if (!keys.has(k)) pressed.add(k);
+    keys.add(k);
   });
-  window.addEventListener('keyup', (event) => keys.delete(event.code));
+  window.addEventListener('keyup', (e) => keys.delete(keyName(e)));
   window.addEventListener('blur', () => keys.clear());
 
-  canvas.addEventListener('pointermove', (event) => {
+  canvas.addEventListener('mousemove', (e) => {
     const r = canvas.getBoundingClientRect();
-    mouseX = (event.clientX - r.left) * (canvas.width / r.width);
-    mouseY = (event.clientY - r.top) * (canvas.height / r.height);
+    mouse.x = e.clientX - r.left;
+    mouse.y = e.clientY - r.top;
   });
-  canvas.addEventListener('pointerdown', (event) => {
-    mouseDown = true;
-    const r = canvas.getBoundingClientRect();
-    mouseX = (event.clientX - r.left) * (canvas.width / r.width);
-    mouseY = (event.clientY - r.top) * (canvas.height / r.height);
-    actions |= ACTION_CONFIRM;
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) { mouse.down = true; mouse.clicked = true; }
   });
-  window.addEventListener('pointerup', () => { mouseDown = false; });
-  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+  window.addEventListener('mouseup', () => { mouse.down = false; });
+
+  function axis() {
+    let x = 0; let y = 0;
+    if (keys.has('a') || keys.has('arrowleft')) x -= 1;
+    if (keys.has('d') || keys.has('arrowright')) x += 1;
+    if (keys.has('w') || keys.has('arrowup')) y -= 1;
+    if (keys.has('s') || keys.has('arrowdown')) y += 1;
+    return { x, y };
+  }
+
+  function takeActions() {
+    let out = 0;
+    if (pressed.has('enter') || pressed.has(' ')) out |= ACTION_CONFIRM;
+    if (pressed.has('escape') || pressed.has('p')) out |= ACTION_PAUSE;
+    if (pressed.has('e')) out |= ACTION_ENTER;
+    if (pressed.has('r')) out |= ACTION_RELOAD;
+    if (pressed.has('m')) out |= ACTION_MUTE;
+    pressed.clear();
+    mouse.clicked = false;
+    return out;
+  }
 
   return {
-    // Held-key helpers used by the player and the car.
-    up() { return keys.has('KeyW') || keys.has('ArrowUp'); },
-    down() { return keys.has('KeyS') || keys.has('ArrowDown'); },
-    left() { return keys.has('KeyA') || keys.has('ArrowLeft'); },
-    right() { return keys.has('KeyD') || keys.has('ArrowRight'); },
-    // Current mouse position in canvas pixels.
-    mouse() { return { x: mouseX, y: mouseY }; },
-    firing() { return mouseDown; },
-    // The one-shot presses since the last call, as ACTION_* flags.
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
+    keys, mouse,
+    axis,
+    takeActions,
+    shooting() { return mouse.down; },
+    consumeClick() { const c = mouse.clicked; mouse.clicked = false; return c; },
   };
 }

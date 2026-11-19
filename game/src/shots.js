@@ -1,131 +1,132 @@
-// shots.js — the deterministic screenshot scenes behind ?shot=start|play|
-// chase|end (with &seed=N). Each scene builds the real game from a fresh
-// state and plays it forward with a simple autopilot, so the frame is what
-// a short game really looks like and the same seed always gives the same
-// frame. start is the title over the city, play is driving fast with a
-// mission running, chase is a 3-star police intercept, end is the finale.
+// Deterministic screenshot staging: ?shot=start|play|chase|end (with &seed=N)
+// sets the world up as a still from the game, paints it twice and sets
+// window.__shotReady. The screenshots are real renders of the game's own code.
+import { createCar, spawnParkedCar } from './vehicles.js';
+import { startMission } from './missions.js';
+import { enterCar } from './player.js';
+import { clearWanted } from './police.js';
 
-import { POIS, DISTRICTS } from './config.js';
-import { createGame, addCar, addPed } from './world.js';
-import { populateCars, populatePeds } from './vehicles.js';
-import { startMission, spawnVipers } from './missions.js';
-import { raiseWanted } from './vehicles.js';
-import { stepWorld } from './main.js';
-
-// Drive the player's car toward the shot's drive target (a point down an
-// open road), steering around the road's centre line: a simple autopilot
-// for the play and chase scenes.
-function autopilotDrive(G) {
-  const p = G.player;
-  const car = p.inCar;
-  if (!car) return { throttle: 0, steer: 0 };
-  const t = G.shotDriveTarget || (G.mission && G.mission.marker) || { x: 1600, y: 1200 };
-  const tx = t.x;
-  const ty = t.y;
-  const want = Math.atan2(ty - car.y, tx - car.x);
-  let diff = want - car.angle;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  return { throttle: 1, steer: Math.max(-1, Math.min(1, diff * 2)) };
+function placeTraffic(state, spots) {
+  // Clear the random traffic and put cars exactly where the shot needs them.
+  state.cars = state.cars.filter((c) => c.isPlayer);
+  const types = ['sedan', 'taxi', 'truck', 'van', 'muscle', 'sedan'];
+  spots.forEach((s, i) => {
+    const car = createCar(types[i % types.length], s.x, s.y, s.angle, state.rng);
+    car.targetSpeed = 150;
+    state.cars.push(car);
+  });
 }
 
-// Run the world forward n fixed steps with a fake input.
-function runSteps(G, n, inputFn) {
-  for (let i = 0; i < n; i += 1) {
-    const fake = { up: () => false, down: () => false, left: () => false, right: () => false, mouse: () => ({ x: 640, y: 400 }), firing: () => false, takeActions: () => 0 };
-    stepWorld(G, fake, 1 / 60, inputFn ? inputFn(G) : null);
-  }
+function putPlayerInSportsCar(state, x, y, angle) {
+  const car = spawnParkedCar(state, 'sports', x, y, angle);
+  car.color = '#c23b3b';
+  car.owned = true;
+  state.player.x = x;
+  state.player.y = y;
+  enterCar(state, car);
+  return car;
 }
 
-// Set a fresh game to the named scene and return the screen to draw.
-export function stageShot(name, seed) {
-  const G = createGame(seed);
-  populateCars(G);
-  populatePeds(G);
-  G.screen = 'play';
-
+export function stageShot(name, state) {
   if (name === 'start') {
-    // Title over a living city: traffic and pedestrians moving.
-    G.screen = 'title';
-    G.camera = { x: 1000, y: 800 };
-    runSteps(G, 60 * 6, null);
-    G.player.x = 1600;
-    G.player.y = 1200;
-    return G;
+    state.screen = 'title';
+    state.camera.x = 1500;
+    state.camera.y = 1150;
+    state.camera.zoom = 0.62;
+    placeTraffic(state, [
+      { x: 1500, y: 850, angle: Math.PI / 2 },
+      { x: 1100, y: 1150, angle: 0 },
+      { x: 1900, y: 1150, angle: Math.PI },
+      { x: 1500, y: 1450, angle: -Math.PI / 2 },
+      { x: 700, y: 850, angle: Math.PI / 2 },
+    ]);
+    const car = spawnParkedCar(state, 'sports', 1560, 1210, Math.PI / 2);
+    car.color = '#c23b3b';
+    state.player.x = 1500;
+    state.player.y = 1150;
+    return 'title';
   }
 
   if (name === 'play') {
-    // Mission 1 active, player driving the stolen Falco GT fast down
-    // Avenue 1600 toward the garage district.
-    startMission(G, 1);
-    const falco = G.cars.find((c) => c.type.key === 'falco');
-    G.player.inCar = falco;
-    falco.driver = 'player';
-    G.player.x = falco.x;
-    G.player.y = falco.y;
-    G.mission.stage = 1;
-    G.mission.marker = { x: POIS.garage.x, y: POIS.garage.y, label: 'Rico Garage' };
-    falco.x = 1600;
-    falco.y = 700;
-    falco.angle = Math.PI / 2;
-    falco.speed = 340;
-    G.player.money = 750;
-    G.shotDriveTarget = { x: 1600, y: 2100 };
-    runSteps(G, 60 * 2, autopilotDrive);
-    return G;
+    state.screen = 'play';
+    clearWanted(state);
+    startMission(state, 0);
+    // Step 1 (steal the Falco) is done by the staging: Jax already has it.
+    // Drop the staged Falco itself so it does not double up on the player's car.
+    state.cars = state.cars.filter((c) => c !== state.mission.falco);
+    state.mission.step = 1;
+    state.mission.marker = { x: 2300, y: 550 };
+    putPlayerInSportsCar(state, 1500, 1150, 0);
+    state.playerCar.speed = 320;
+    placeTraffic(state, [
+      { x: 1500, y: 850, angle: Math.PI / 2 },
+      { x: 1100, y: 1150, angle: 0 },
+      { x: 1900, y: 1150, angle: Math.PI },
+      { x: 1500, y: 1450, angle: -Math.PI / 2 },
+      { x: 700, y: 1150, angle: 0 },
+      { x: 2300, y: 850, angle: Math.PI / 2 },
+    ]);
+    // Keep the player's car in the traffic list (placeTraffic filtered it out).
+    if (!state.cars.includes(state.playerCar)) state.cars.push(state.playerCar);
+    state.camera.x = state.player.x;
+    state.camera.y = state.player.y;
+    state.camera.zoom = 0.85;
+    return 'play';
   }
 
   if (name === 'chase') {
-    // 3 wanted stars, two cruisers closing in with flashing lights, and a
-    // foot cop ahead; the player is mid-getaway east along Street 1250.
-    startMission(G, 5);
-    raiseWanted(G, 3);
-    G.missionTimer = 63;
-    const coupe = G.cars.find((c) => c.type.key === 'coupe');
-    G.player.inCar = coupe;
-    coupe.driver = 'player';
-    coupe.x = 1400;
-    coupe.y = 1250;
-    coupe.angle = 0;
-    coupe.speed = 340;
-    G.player.x = coupe.x;
-    G.player.y = coupe.y;
-    G.player.money = 2150;
-    G.shotDriveTarget = { x: 2600, y: 1250 };
-    // Two cruisers trailing behind on the same street, lights flashing.
-    const c1 = addCar(G, 'sedan', 1180, 1250, 0, 'police');
-    c1.color = '#1a2a4a';
-    c1.speed = 300;
-    const c2 = addCar(G, 'sedan', 1060, 1250, 0, 'police');
-    c2.color = '#1a2a4a';
-    c2.speed = 290;
-    G.footCops.push({ x: 1900, y: 1180, hp: 60, speed: 220, angle: 0, shootTimer: 1 });
-    runSteps(G, 60, autopilotDrive);
-    return G;
+    state.screen = 'play';
+    startMission(state, 4);
+    const car = putPlayerInSportsCar(state, 1500, 1150, 0);
+    car.speed = 380;
+    placeTraffic(state, [
+      { x: 1100, y: 1150, angle: 0 },
+      { x: 1900, y: 850, angle: Math.PI / 2 },
+    ]);
+    if (!state.cars.includes(state.playerCar)) state.cars.push(state.playerCar);
+    // Two interceptors tight on Jax's tail, lights flashing.
+    const cop1 = createCar('police', 1380, 1180, 0, state.rng);
+    cop1.isCop = true;
+    cop1.speed = 420;
+    const cop2 = createCar('police', 1330, 1120, 0, state.rng);
+    cop2.isCop = true;
+    cop2.speed = 400;
+    state.cars.push(cop1, cop2);
+    state.audio.setSiren(true);
+    state.camera.x = state.player.x;
+    state.camera.y = state.player.y;
+    state.camera.zoom = 0.85;
+    return 'play';
   }
 
-  // end: the finale — KING OF SOLMAR with fireworks over the mansion.
-  G.screen = 'finale';
-  G.player.x = POIS.mansion.x + 220;
-  G.player.y = POIS.mansion.y + 200;
-  G.player.money = 8300;
-  G.stats.missionsDone = 6;
-  G.stats.moneyEarned = 9500;
-  G.stats.carsStolen = 14;
-  G.stats.kills = 23;
-  G.missionIndex = 6;
-  G.mission = { id: 6, name: 'King of Solmar', brief: 'Storm Villa Del Sol. Three waves guard the mansion.', reward: 5000, stage: 0, progress: 0, target: 3, marker: null, done: true, wave: 3 };
-  for (let i = 0; i < 60; i += 1) {
-    const a = G.rng() * Math.PI * 2;
-    const r = 60 + G.rng() * 220;
-    G.fireworks.push({
-      x: POIS.mansion.x + 100 + Math.cos(a) * r,
-      y: POIS.mansion.y + 100 + Math.sin(a) * r * 0.6,
-      vx: 0, vy: 0,
-      color: ['#ffd94a', '#ff6b6b', '#7dff8a', '#7db8ff'][i % 4],
-      life: 1.2, maxLife: 1.2, size: 4 + G.rng() * 4,
-    });
+  if (name === 'end') {
+    state.screen = 'finale';
+    state.cash = 12480;
+    state.completed = [1, 2, 3, 4, 5, 6];
+    state.stats.carsStolen = 23;
+    // The finale looks over downtown, where the city is densest.
+    state.camera.x = 1500;
+    state.camera.y = 1150;
+    state.camera.zoom = 0.62;
+    placeTraffic(state, [
+      { x: 1500, y: 850, angle: Math.PI / 2 },
+      { x: 1100, y: 1150, angle: 0 },
+      { x: 1900, y: 1150, angle: Math.PI },
+      { x: 1500, y: 1450, angle: -Math.PI / 2 },
+      { x: 700, y: 850, angle: Math.PI / 2 },
+    ]);
+    // Fireworks over downtown.
+    const colors = ['rgba(255,210,58,0.95)', 'rgba(255,90,90,0.95)', 'rgba(90,200,255,0.95)', 'rgba(140,255,140,0.95)'];
+    for (let i = 0; i < 8; i++) {
+      state.effects.push({
+        kind: 'firework',
+        x: 1500 + (i - 4) * 170 + (i % 2 ? 60 : -40),
+        y: 1150 - 260 - (i % 3) * 110,
+        t: 0, life: 2.2, color: colors[i % colors.length],
+      });
+    }
+    return 'finale';
   }
-  runSteps(G, 30, null);
-  return G;
+
+  return 'title';
 }
