@@ -1,20 +1,37 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="id">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
 <title>SOLMAR — Streets of the Sun</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #14161f; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #1a0f08;
+    height: 100%;
+    overflow: hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  #wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+  }
+  canvas {
+    display: block;
+    background: #e8b06a;
+    image-rendering: auto;
+  }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="SOLMAR: an open-world crime game. Drive, steal cars, outrun the police and run missions across Solmar Bay"></canvas>
-<p id="status" role="status" aria-live="polite"></p>
+<noscript><p style="color:#fff;text-align:center;padding-top:40vh">SOLMAR membutuhkan JavaScript yang aktif untuk dimainkan.</p></noscript>
+<div id="wrap">
+  <canvas id="game" width="1280" height="800"></canvas>
+</div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
