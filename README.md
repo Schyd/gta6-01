@@ -1,85 +1,47 @@
-# SOLMAR — Streets of the Sun
+# gta6-01
 
 [![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![rank](https://make.fun/badge/gta6-01/Schyd/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/Schyd/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-An original 2D top-down open-world crime game set in the fictional city of
-Solmar Bay. No assets, names or trademarks from any commercial game.
+**SOLMAR — Streets of the Sun.** An open-world crime game in the spirit of GTA 6, built from scratch: a sun-soaked coastal city to explore on foot and by car, traffic and pedestrians, cars to steal and drive, a wanted level with police who chase you, six story missions, combat, shops, a HUD with a minimap — and a save file that keeps your progress.
 
-## The city
-
-Solmar Bay is a 3200×2400 golden-hour city: a downtown of towers, Solmar
-Park with its pond, Palmera Beach, the harbor docks and the mansion hill
-above Villa Del Sol. Streets run on a grid, traffic follows the roads, and
-pedestrians walk the sidewalks — and call the police when they see a crime.
-
-## What you can do
-
-- **Explore on foot and by car** — 7 stealable car types (Falco GT, Lumen
-  Coupe, Marina Sedan, Solmar Taxi, Dune Pickup, Cargo Van, Haul Truck),
-  each with its own acceleration, top speed and handling.
-- **Wanted level 0–5 stars** — foot police chase and arrest on touch,
-  patrol cruisers ram and intercept, and the heat cools when you stay out
-  of sight. A spray shop clears your wanted level for $300.
-- **Combat** — mouse aim, three weapons (Pistol, SMG, Rifle) with reloads,
-  enemies who shoot back, a gun shop and a clinic.
-- **Six story missions** — steal the Falco GT, a timed courier run, a crate
-  hunt, a park shootout, a 90-second three-star getaway, and a three-wave
-  mansion finale worth $5,000. Finish them all to become the King of Solmar.
-- **HUD + minimap** — wanted stars, money and health, the mission
-  objective, a weapon panel, a speed panel and a live minimap of Solmar Bay.
-- **Save** — money, missions and weapons persist in localStorage.
-- **Sound** — everything is synthesized with WebAudio (engine hum, gunshots,
-  sirens, a bass-and-hats music loop). No audio files, no network.
-
-## Controls
-
-| Key | Action |
-| --- | --- |
-| WASD / arrows | Move / drive |
-| Mouse | Aim |
-| Click | Shoot |
-| E | Enter/exit car, use shops |
-| Q | Switch weapon |
-| R | Reload |
-| Esc | Pause |
-| Enter | Start / continue |
+You are Jax Marín, getaway driver for the fixer Madame Luz. Steal the red Falco GT, run a courier across town against the clock, lift six crates at the harbour, wipe out eight Vipers in the Barrio, survive a three-star getaway in ninety seconds, and take the mansion hill in three waves to become King of Solmar.
 
 ## Run it
 
-Serve `game/` with any static server and open `game/index.html` in desktop
-Chrome. It plays fully offline.
-
-```
-node serve.ts   # then open http://localhost:8080
+```sh
+node serve.ts
 ```
 
-## Screenshots
+Then open http://localhost:8080 in a desktop browser. No build step, no network — the game is plain static files under `game/`, all art drawn on canvas and all sound synthesised with the Web Audio API.
 
-Deterministic scenes via `?shot=start|play|chase|end&seed=1`:
+## How to play
 
-1. `1-start.jpg` — title screen over the living city
-2. `2-play.jpg` — driving the Falco GT with Mission 1 active
-3. `3-chase.jpg` — a 3-star police intercept
-4. `4-end.jpg` — the finale: KING OF SOLMAR
+- **Move / drive:** WASD or arrow keys
+- **Enter a car / use a shop:** E (stealing a car in plain sight earns a wanted star)
+- **Aim:** mouse — **shoot:** click — **reload:** R
+- **Pause:** Esc — **mute:** M — **start / continue:** Enter
+- **Lose the heat:** wait it out unseen, or pay $300 at the Spray Shop
+- **Buy ammo ($50) / heal ($100):** Solmar Arms and the Clinic, marked on the minimap
 
-## Layout
+## The city
 
-- `game/src/config.js` — constants, palette, cars, weapons, missions
-- `game/src/random.js` — seeded RNG for the city and the screenshots
-- `game/src/world.js` — the city generator and the game state
-- `game/src/vehicles.js` — driving physics, traffic AI, stealing
-- `game/src/police.js` — wanted system, foot cops, cruisers, bullets
+Solmar Bay is a 3200×2400 grid city: downtown towers, the Barrio, the harbour, a palm beach and the mansion hill. Traffic follows the roads, pedestrians stroll the sidewalks and scatter from gunfire, and the Solmar PD answers every star with interceptors and foot cops.
+
+## Files
+
+- `game/src/config.js` — tuning, palette, car specs
+- `game/src/city.js` — the city generator and collision queries
+- `game/src/world.js` — the one state object and the fixed-step update
+- `game/src/player.js` — on-foot movement, cars, shops
+- `game/src/vehicles.js` — driving physics and traffic AI
+- `game/src/pedestrians.js` — sidewalk crowds and witnesses
+- `game/src/police.js` — the wanted system and pursuit
+- `game/src/combat.js` — shooting, damage, pickups
 - `game/src/missions.js` — the six-mission story
-- `game/src/audio.js` — synthesized WebAudio sound and music
-- `game/src/input.js` — keyboard and mouse input
-- `game/src/save.js` — localStorage save/load
-- `game/src/shots.js` — the deterministic screenshot scenes
-- `game/src/render.js` — world, car and menu drawing
-- `game/src/hud.js` — HUD, minimap, speed and weapon panels
-- `game/src/main.js` — boot, the game loop, player actions, shops
-
-## License
-
-MIT — see `LICENSE`.
+- `game/src/render.js` — the canvas city, cars and effects
+- `game/src/hud.js` — HUD, minimap and menus
+- `game/src/audio.js` — synthesised sound and music
+- `game/src/shots.js` — deterministic screenshot staging
+- `game/src/main.js` — boot and the game loop

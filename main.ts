@@ -1,9 +1,9 @@
-// SOLMAR — Streets of the Sun (gta6-01 entry): an original open-world crime
-// game built in this recorded session. The program hands the game in: it
-// copies game/ and screenshots/ from beside this file to /output and writes
-// /output/dossier.json with the vendored make.fun library. Authored line:
-// the dossier build below also verifies the output directory is writable
-// before copying, so a failed run reports the real problem first.
+// SOLMAR — the make.fun handoff program (Node 22, standard library only).
+// Authored for the gta6-01 entry: it copies this repository's game/ and
+// screenshots/ to /output and writes /output/dossier.json, the summary the
+// judge reads, with the vendored make.fun library. The game itself is plain
+// static files a desktop browser loads offline (game/index.html and its ES
+// modules, no library and no network request).
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
